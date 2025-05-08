@@ -14,11 +14,13 @@ authors = [
 ]
 dependencies = [
     "myst-parser>=0.18.0",
+    "markdown-it-py>=3.0.0",
     "click>=8.0.0",
     "markdown>=3.3.0",
     "pyyaml>=6.0",
     "rich>=12.0.0",
     "typing-extensions>=4.0.0",
+    "pygit2>=1.18",
 ]
 
 [project.scripts]

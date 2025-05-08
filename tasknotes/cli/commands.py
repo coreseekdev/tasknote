@@ -8,7 +8,7 @@ import click
 from rich.console import Console
 
 from tasknotes.core import TaskManager
-from tasknotes.config import Config
+from tasknotes.core import Config
 
 console = Console()
 
