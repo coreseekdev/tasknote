@@ -7,8 +7,8 @@ from pathlib import Path
 import pygit2
 from pygit2.repository import RepositoryOpenFlag
 
-# Use relative import since both modules are in the same package
-from .file_service import FileService
+# Import FileService from interface package
+from tasknotes.interface.file_service import FileService
 
 
 def setup_git_alias() -> bool:
@@ -108,16 +108,22 @@ class TaskNoteEnv:
             try:
                 # Try to get user name and email from repository config
                 config = self._repo.config
-                user_name = config.get_string("user.name")
-                user_email = config.get_string("user.email")
+                try:
+                    user_name = config["user.name"]
+                    user_email = config["user.email"]
+                except KeyError:
+                    pass
             except (pygit2.GitError, KeyError):
                 # Try to get from global config
                 try:
                     global_config_path = pygit2.Config.find_global()
                     if global_config_path:
                         global_config = pygit2.Config.open(global_config_path)
-                        user_name = global_config.get_string("user.name")
-                        user_email = global_config.get_string("user.email")
+                        try:
+                            user_name = global_config["user.name"]
+                            user_email = global_config["user.email"]
+                        except KeyError:
+                            pass
                 except (pygit2.GitError, KeyError):
                     # Use defaults if there's an error
                     pass

@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import List, Optional, Dict, Any, BinaryIO, Set, Iterator
 
-from .file_service import FileService
+from tasknotes.interface.file_service import FileService
 from .task_env import TaskNoteEnv
 
 class LocalFilesystem(FileService):

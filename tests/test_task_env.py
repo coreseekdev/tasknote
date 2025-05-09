@@ -12,9 +12,7 @@ import pygit2
 # Add the project root to the Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Import with mock to handle dependencies
-with mock.patch('tasknotes.core.file_service.FileService'):
-    from tasknotes.core.task_env import TaskNoteEnv
+from tasknotes.core.task_env import TaskNoteEnv
 
 
 class TestTaskNoteEnv(unittest.TestCase):
