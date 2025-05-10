@@ -8,8 +8,9 @@ This module provides the FileService interface and implementations for different
 import os
 import shutil
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from pathlib import Path
-from typing import List, Optional, Dict, Any, BinaryIO, Set, Iterator
+from typing import List, Optional, Dict, Any, BinaryIO, Set, Iterator, Generator, ContextManager
 
 
 class FileService(ABC):
@@ -124,4 +125,65 @@ class FileService(ABC):
             FileExistsError: If the destination file already exists
         """
         pass
+    
+    @abstractmethod
+    def begin_transaction(self) -> None:
+        """Begin a transaction for batching multiple file operations.
+        
+        This method starts a transaction that allows multiple file operations
+        to be batched together and committed atomically. Not all implementations
+        may support transactions, in which case this method may be a no-op.
+        """
+        pass
+    
+    @abstractmethod
+    def commit_transaction(self, message: str = "") -> None:
+        """Commit the current transaction.
+        
+        This method commits all operations performed since the last call to
+        begin_transaction. Not all implementations may support transactions,
+        in which case this method may be a no-op.
+        
+        Args:
+            message: Optional commit message (for implementations that support it)
+        """
+        pass
+    
+    @abstractmethod
+    def abort_transaction(self) -> None:
+        """Abort the current transaction.
+        
+        This method discards all operations performed since the last call to
+        begin_transaction. Not all implementations may support transactions,
+        in which case this method may be a no-op.
+        """
+        pass
+    
+    @contextmanager
+    def transaction(self, message: str = "") -> Generator[None, None, None]:
+        """Context manager for transactions.
+        
+        This method provides a convenient way to use transactions with a
+        context manager. It calls begin_transaction() when entering the
+        context and commit_transaction() when exiting normally, or
+        abort_transaction() if an exception is raised.
+        
+        Args:
+            message: Optional commit message (for implementations that support it)
+            
+        Yields:
+            None
+            
+        Example:
+            with file_service.transaction("Batch operation"):
+                file_service.write_file("file1.txt", "content1")
+                file_service.write_file("file2.txt", "content2")
+        """
+        try:
+            self.begin_transaction()
+            yield
+            self.commit_transaction(message)
+        except Exception:
+            self.abort_transaction()
+            raise
 

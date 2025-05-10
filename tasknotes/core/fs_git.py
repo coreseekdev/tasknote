@@ -34,6 +34,10 @@ class GitRepoTree(FileService):
         # Create a signature for commits
         self.signature = pygit2.Signature("TaskNotes", "tasknotes@example.com")
         
+        # Transaction state
+        self._in_transaction = False
+        self._transaction_tree = None
+        
         self._ensure_branch_exists()
     
     def _ensure_branch_exists(self) -> None:
@@ -80,6 +84,158 @@ class GitRepoTree(FileService):
         # Update the branch reference
         self.repo.references[branch.name].set_target(commit)
     
+    def begin_transaction(self) -> None:
+        """Begin a transaction for batching multiple file operations.
+        
+        This method starts a transaction that allows multiple file operations
+        to be batched together and committed atomically.
+        """
+        if self._in_transaction:
+            raise ValueError("Transaction already in progress")
+        
+        # Start with the current tree
+        self._transaction_tree = self._get_tree_from_branch()
+        self._in_transaction = True
+    
+    def commit_transaction(self, message: str = "Batch file operations") -> None:
+        """Commit the current transaction.
+        
+        This method commits all operations performed since the last call to
+        begin_transaction.
+        
+        Args:
+            message: Commit message
+        
+        Raises:
+            ValueError: If no transaction is in progress
+        """
+        if not self._in_transaction:
+            raise ValueError("No transaction in progress")
+        
+        # Commit the changes if the tree has been modified
+        if self._transaction_tree is not None:
+            self._commit_changes(message, self._transaction_tree.id)
+        
+        # Reset transaction state
+        self._in_transaction = False
+        self._transaction_tree = None
+    
+    def abort_transaction(self) -> None:
+        """Abort the current transaction.
+        
+        This method discards all operations performed since the last call to
+        begin_transaction.
+        
+        Raises:
+            ValueError: If no transaction is in progress
+        """
+        if not self._in_transaction:
+            raise ValueError("No transaction in progress")
+        
+        # Reset transaction state
+        self._in_transaction = False
+        self._transaction_tree = None
+    
+    def _get_current_tree(self) -> pygit2.Tree:
+        """Get the current tree to operate on.
+        
+        Returns the transaction tree if in a transaction, otherwise gets the tree from the branch.
+        
+        Returns:
+            pygit2.Tree: The current tree
+        """
+        if self._in_transaction and self._transaction_tree is not None:
+            return self._transaction_tree
+        else:
+            return self._get_tree_from_branch()
+    
+    def _get_subtree(self, tree, path_parts):
+        """Get a subtree at the specified path.
+        
+        Args:
+            tree: The root tree to start from
+            path_parts: List of path components to navigate
+            
+        Returns:
+            pygit2.Tree: The subtree at the specified path
+            
+        Raises:
+            KeyError: If the path does not exist
+            ValueError: If a path component is not a directory
+        """
+        current_tree = tree
+        for part in path_parts:
+            if not part:  # Skip empty parts
+                continue
+            entry = current_tree[part]
+            if not isinstance(entry, pygit2.Tree):
+                raise ValueError(f"Path component is not a directory: {part}")
+            current_tree = entry
+        return current_tree
+    
+    def _update_subtree(self, tree, path_parts, name, new_id):
+        """Update a subtree at the specified path with a new entry.
+        
+        Args:
+            tree: The root tree to start from
+            path_parts: List of path components to navigate
+            name: Name of the entry to update
+            new_id: ID of the new entry
+            
+        Returns:
+            pygit2.Oid: ID of the updated tree
+        """
+        if not path_parts:
+            # We've reached the target directory, update the entry
+            builder = self.repo.TreeBuilder(tree)
+            builder.insert(name, new_id, pygit2.GIT_FILEMODE_TREE)
+            return builder.write()
+        
+        # Get the subtree for the current path component
+        part = path_parts[0]
+        subtree = tree[part]
+        
+        # Recursively update the subtree
+        new_subtree_id = self._update_subtree(subtree, path_parts[1:], name, new_id)
+        
+        # Create a new tree with the updated subtree
+        builder = self.repo.TreeBuilder(tree)
+        builder.remove(part)
+        builder.insert(part, new_subtree_id, pygit2.GIT_FILEMODE_TREE)
+        
+        return builder.write()
+    
+    def _update_tree_recursive(self, builder, tree, path_parts, new_id):
+        """Recursively update a tree with a new subtree.
+        
+        Args:
+            builder: TreeBuilder for the root tree
+            tree: The root tree
+            path_parts: List of path components to navigate
+            new_id: ID of the new subtree
+            
+        Returns:
+            pygit2.Oid: ID of the updated tree
+        """
+        if not path_parts:
+            return builder.write()
+        
+        if len(path_parts) == 1:
+            # Update the root tree directly
+            builder.remove(path_parts[0])
+            builder.insert(path_parts[0], new_id, pygit2.GIT_FILEMODE_TREE)
+            return builder.write()
+        
+        # Update the subtree recursively
+        subtree = tree[path_parts[0]]
+        new_subtree_id = self._update_subtree(subtree, path_parts[1:], path_parts[-1], new_id)
+        
+        # Update the root tree with the new subtree
+        builder.remove(path_parts[0])
+        builder.insert(path_parts[0], new_subtree_id, pygit2.GIT_FILEMODE_TREE)
+        
+        return builder.write()
+    
     def read_file(self, path: str) -> str:
         """Read a file from the storage.
         
@@ -92,7 +248,8 @@ class GitRepoTree(FileService):
         Raises:
             FileNotFoundError: If the file does not exist
         """
-        tree = self._get_tree_from_branch()
+        # Use the transaction tree if in a transaction
+        tree = self._get_current_tree()
         
         # Handle paths with directories
         path_parts = path.split('/')
@@ -130,64 +287,79 @@ class GitRepoTree(FileService):
             IOError: If the file cannot be written
         """
         # Get the current tree
-        tree = self._get_tree_from_branch()
+        tree = self._get_current_tree()
         
-        # Create a blob with the file content
+        # Create a blob for the file content
         blob_id = self.repo.create_blob(content.encode("utf-8"))
         
-        # Handle paths with directories
-        path_parts = path.split('/')
-        current_tree = tree
-        builders = []
-        
-        # Build intermediate directory trees if needed
-        for i, part in enumerate(path_parts[:-1]):
-            try:
-                entry = current_tree[part]
-                if isinstance(entry, pygit2.Tree):
-                    current_tree = entry
-                else:
-                    raise IOError(f"Path component exists but is not a directory: {part}")
-            except KeyError:
-                # Create a new empty tree for this directory level
-                new_builder = self.repo.TreeBuilder()
-                tree_id = new_builder.write()
-                current_tree = self.repo[tree_id]
-            
-            # Create a builder for this level, copying existing entries
-            builder = self.repo.TreeBuilder(current_tree)
-            builders.append((part, builder))
-        
-        # Insert the file into the final directory
+        # Split the path into parts
+        path_parts = path.split("/")
         filename = path_parts[-1]
-        if builders:
-            last_builder = builders[-1][1]
+        
+        # If the file is in a subdirectory, we need to create or update the subtree
+        if len(path_parts) > 1:
+            # Create a simplified recursive approach to build the directory structure
+            new_tree_id = self._write_to_subtree(tree, path_parts, 0, blob_id)
         else:
-            last_builder = self.repo.TreeBuilder(tree)
+            # File is in the root directory - simple case
+            builder = self.repo.TreeBuilder(tree)
+            builder.insert(filename, blob_id, pygit2.GIT_FILEMODE_BLOB)
+            new_tree_id = builder.write()
         
-        last_builder.insert(filename, blob_id, pygit2.GIT_FILEMODE_BLOB)
-        current_tree_id = last_builder.write()
+        # Get the new tree
+        new_tree = self.repo[new_tree_id]
         
-        # Work our way back up, creating new trees with the updated subtrees
-        for part, builder in reversed(builders[:-1]):
-            builder.insert(path_parts[builders.index((part, builder)) + 1], 
-                         current_tree_id, 
-                         pygit2.GIT_FILEMODE_TREE)
-            current_tree_id = builder.write()
-        
-        # Finally, update the root tree
-        if builders:
-            root_builder = self.repo.TreeBuilder(tree)
-            root_builder.insert(path_parts[0], current_tree_id, pygit2.GIT_FILEMODE_TREE)
-            final_tree_id = root_builder.write()
+        # If in a transaction, update the transaction tree
+        if self._in_transaction:
+            self._transaction_tree = new_tree
         else:
-            # File is in the root directory
-            root_builder = self.repo.TreeBuilder(tree)
-            root_builder.insert(filename, blob_id, pygit2.GIT_FILEMODE_BLOB)
-            final_tree_id = root_builder.write()
+            # Otherwise, commit the changes immediately
+            self._commit_changes(f"Write {path}", new_tree_id)
+    
+    def _write_to_subtree(self, tree, path_parts, index, blob_id):
+        """Recursively write a file to a subtree.
         
-        # Commit the changes
-        self._commit_changes(f"Write file: {path}", final_tree_id)
+        Args:
+            tree: Current tree to process
+            path_parts: List of path components
+            index: Current index in path_parts
+            blob_id: ID of the blob to write
+            
+        Returns:
+            pygit2.Oid: ID of the new tree
+        """
+        if index == len(path_parts) - 1:
+            # We've reached the file to write
+            builder = self.repo.TreeBuilder(tree)
+            builder.insert(path_parts[index], blob_id, pygit2.GIT_FILEMODE_BLOB)
+            return builder.write()
+        
+        # We need to create or update a subtree
+        builder = self.repo.TreeBuilder(tree)
+        part = path_parts[index]
+        
+        try:
+            # Try to get the existing subtree
+            entry = tree[part]
+            if isinstance(entry, pygit2.Tree):
+                # Subtree exists, recursively update it
+                subtree = entry
+                new_subtree_id = self._write_to_subtree(subtree, path_parts, index + 1, blob_id)
+            else:
+                # Path exists but is not a directory
+                raise IOError(f"Path component is not a directory: {part}")
+        except KeyError:
+            # Subtree doesn't exist, create a new empty one and then update it
+            empty_builder = self.repo.TreeBuilder()
+            empty_tree_id = empty_builder.write()
+            empty_tree = self.repo[empty_tree_id]
+            
+            # Recursively build the rest of the path
+            new_subtree_id = self._write_to_subtree(empty_tree, path_parts, index + 1, blob_id)
+        
+        # Update the current tree with the new subtree
+        builder.insert(part, new_subtree_id, pygit2.GIT_FILEMODE_TREE)
+        return builder.write()
     
     def delete_file(self, path: str) -> None:
         """Delete a file from the storage.
@@ -203,11 +375,10 @@ class GitRepoTree(FileService):
             raise FileNotFoundError(f"File not found: {path}")
         
         # Get the current tree
-        tree = self._get_tree_from_branch()
+        tree = self._get_current_tree()
         
         # Split the path into parts
         path_parts = path.split("/")
-        filename = path_parts[-1]
         
         # If the file is in a subdirectory, we need to update the subtree
         if len(path_parts) > 1:
@@ -216,11 +387,18 @@ class GitRepoTree(FileService):
         else:
             # Remove the file from the root tree
             builder = self.repo.TreeBuilder(tree)
-            builder.remove(filename)
+            builder.remove(path_parts[0])
             new_tree_id = builder.write()
         
-        # Commit the changes
-        self._commit_changes(f"Delete {path}", new_tree_id)
+        # Get the new tree
+        new_tree = self.repo[new_tree_id]
+        
+        # If in a transaction, update the transaction tree
+        if self._in_transaction:
+            self._transaction_tree = new_tree
+        else:
+            # Otherwise, commit the changes immediately
+            self._commit_changes(f"Delete {path}", new_tree_id)
     
     def _delete_from_subtree(self, tree, path_parts, index):
         """Recursively delete a file from a subtree.
@@ -266,8 +444,8 @@ class GitRepoTree(FileService):
         """
         import fnmatch
         
-        # Get the current tree
-        tree = self._get_tree_from_branch()
+        # Get the current tree (use transaction tree if in a transaction)
+        tree = self._get_current_tree()
         
         # If a directory is specified, navigate to it
         if directory:
@@ -312,7 +490,8 @@ class GitRepoTree(FileService):
         Returns:
             bool: True if the file exists, False otherwise
         """
-        tree = self._get_tree_from_branch()
+        # Use the transaction tree if in a transaction
+        tree = self._get_current_tree()
         
         # Handle paths with directories
         path_parts = path.split('/')
@@ -345,6 +524,7 @@ class GitRepoTree(FileService):
         """
         # In Git, directories are created implicitly when files are added
         # So we create an empty .gitkeep file in the directory
+        # This will use the transaction if one is in progress
         self.write_file(f"{path}/.gitkeep", "")
     
     def get_modified_time(self, path: str) -> float:
@@ -359,8 +539,52 @@ class GitRepoTree(FileService):
         Raises:
             FileNotFoundError: If the file does not exist
         """
+        # Check if the file exists using the transaction-aware file_exists method
         if not self.file_exists(path):
             raise FileNotFoundError(f"File not found: {path}")
+        
+        # If we're in a transaction and the file has been modified in the transaction,
+        # we should return the current time as the modified time
+        if self._in_transaction:
+            # Check if the file exists in the transaction tree but not in the branch tree
+            # or if the content is different
+            try:
+                # Get the file from the transaction tree
+                transaction_content = self.read_file(path)
+                
+                # Try to get the file from the branch tree
+                branch_tree = self._get_tree_from_branch()
+                current_tree = branch_tree
+                path_parts = path.split('/')
+                
+                try:
+                    # Navigate through the directory structure in the branch tree
+                    for i, part in enumerate(path_parts[:-1]):
+                        entry = current_tree[part]
+                        if isinstance(entry, pygit2.Tree):
+                            current_tree = entry
+                        else:
+                            # File was created in the transaction
+                            return time.time()
+                    
+                    # Get the file from the final directory in the branch tree
+                    filename = path_parts[-1]
+                    blob = current_tree[filename]
+                    
+                    if isinstance(blob, pygit2.Blob):
+                        branch_content = blob.data.decode("utf-8")
+                        if branch_content != transaction_content:
+                            # File was modified in the transaction
+                            return time.time()
+                    else:
+                        # File was created in the transaction
+                        return time.time()
+                except KeyError:
+                    # File was created in the transaction
+                    return time.time()
+            except Exception:
+                # If anything goes wrong, fall back to the commit history approach
+                pass
         
         # FIXME: 当前的实现反映两次 commit 的时间戳相同，无法区分。
 
@@ -384,8 +608,9 @@ class GitRepoTree(FileService):
                 continue
         
         if last_commit is None:
-            # This should never happen as we checked file_exists
-            raise FileNotFoundError(f"File not found in commit history: {path}")
+            # This should never happen as we checked file_exists,
+            # unless the file only exists in the transaction
+            return time.time()
         
         return last_commit_time
 
@@ -409,22 +634,35 @@ class GitRepoTree(FileService):
         if self.file_exists(new_path):
             raise FileExistsError(f"Destination file already exists: {new_path}")
         
-        # Read the content of the source file
-        content = self.read_file(old_path)
+        # Use a transaction to perform the rename as a single operation
+        was_in_transaction = self._in_transaction
         
-        # Create parent directories for the destination if needed
-        new_dir = "/".join(new_path.split("/")[:-1])
-        if new_dir and not any(self.list_files(new_dir)):
-            self.create_directory(new_dir)
-        
-        # Write the content to the new location
-        self.write_file(new_path, content)
-        
-        # Delete the old file
-        self.delete_file(old_path)
-        
-        # Commit the changes
-        self._commit_changes(f"Renamed {old_path} to {new_path}", self._get_tree_from_branch().id)
+        try:
+            if not was_in_transaction:
+                self.begin_transaction()
+            
+            # Read the content of the source file
+            content = self.read_file(old_path)
+            
+            # Create parent directories for the destination if needed
+            new_dir = "/".join(new_path.split("/")[:-1])
+            if new_dir and not any(self.list_files(new_dir)):
+                self.create_directory(new_dir)
+            
+            # Write the content to the new location
+            self.write_file(new_path, content)
+            
+            # Delete the old file
+            self.delete_file(old_path)
+            
+            # Commit the transaction if we started it
+            if not was_in_transaction:
+                self.commit_transaction(f"Renamed {old_path} to {new_path}")
+        except Exception:
+            # Abort the transaction if we started it and there was an error
+            if not was_in_transaction:
+                self.abort_transaction()
+            raise
     
     def _get_changed_files(self, commit) -> Set[str]:
         """Get the files changed in a commit.

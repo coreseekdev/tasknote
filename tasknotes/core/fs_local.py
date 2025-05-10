@@ -169,4 +169,31 @@ class LocalFilesystem(FileService):
         
         # Perform the rename/move operation
         old_full_path.rename(new_full_path)
+    
+    def begin_transaction(self) -> None:
+        """Begin a transaction for batching multiple file operations.
+        
+        For LocalFilesystem, this is a no-op as file operations are already atomic.
+        """
+        # No-op for local filesystem
+        pass
+    
+    def commit_transaction(self, message: str = "") -> None:
+        """Commit the current transaction.
+        
+        For LocalFilesystem, this is a no-op as file operations are already atomic.
+        
+        Args:
+            message: Ignored for LocalFilesystem
+        """
+        # No-op for local filesystem
+        pass
+    
+    def abort_transaction(self) -> None:
+        """Abort the current transaction.
+        
+        For LocalFilesystem, this is a no-op as file operations are already atomic.
+        """
+        # No-op for local filesystem
+        pass
 
