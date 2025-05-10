@@ -1,4 +1,5 @@
 import pygit2
+import time
 from pathlib import Path
 from typing import List, Optional, Dict, Any, BinaryIO, Set, Iterator
 
@@ -29,6 +30,10 @@ class GitRepoTree(FileService):
         self.env = env
         self.repo = env._repo
         self.branch_name = branch_name
+        
+        # Create a signature for commits
+        self.signature = pygit2.Signature("TaskNotes", "tasknotes@example.com")
+        
         self._ensure_branch_exists()
     
     def _ensure_branch_exists(self) -> None:
@@ -52,29 +57,28 @@ class GitRepoTree(FileService):
         return commit.tree
     
     def _commit_changes(self, message: str, tree_id: pygit2.Oid) -> None:
-        """Commit changes to the tasknote branch.
+        """Commit changes to the repository.
         
         Args:
             message: Commit message
             tree_id: ID of the tree to commit
         """
-        # Get the branch and its target commit
+        # Get the current branch
         branch = self.repo.branches[self.branch_name]
-        parent = self.repo[branch.target]
         
         # Create the commit
-        author = pygit2.Signature("TaskNotes", "tasknotes@example.com")
-        committer = author
-        
-        # Create the commit
-        commit_id = self.repo.create_commit(
-            f"refs/heads/{self.branch_name}",  # Reference to update
-            author,
-            committer,
-            message,
-            tree_id,
-            [parent.id]
+        commit = self.repo.create_commit(
+            branch.name,  # Reference name
+            self.signature,  # Author
+            self.signature,  # Committer
+            message,  # Commit message
+            tree_id,  # Tree ID
+            # Parent commits
+            [branch.target] if not self.repo.is_empty else []
         )
+        
+        # Update the branch reference
+        self.repo.references[branch.name].set_target(commit)
     
     def read_file(self, path: str) -> str:
         """Read a file from the storage.
@@ -125,52 +129,65 @@ class GitRepoTree(FileService):
         Raises:
             IOError: If the file cannot be written
         """
-        # Create a new tree with the file added or modified
+        # Get the current tree
         tree = self._get_tree_from_branch()
-        builder = self.repo.TreeBuilder(tree)
         
-        # Create the blob
+        # Create a blob with the file content
         blob_id = self.repo.create_blob(content.encode("utf-8"))
         
-        # Add the blob to the tree
-        path_parts = path.split("/")
-        if len(path_parts) > 1:
-            # We need to create or update subtrees
-            current_tree = tree
-            current_path = ""
+        # Handle paths with directories
+        path_parts = path.split('/')
+        current_tree = tree
+        builders = []
+        
+        # Build intermediate directory trees if needed
+        for i, part in enumerate(path_parts[:-1]):
+            try:
+                entry = current_tree[part]
+                if isinstance(entry, pygit2.Tree):
+                    current_tree = entry
+                else:
+                    raise IOError(f"Path component exists but is not a directory: {part}")
+            except KeyError:
+                # Create a new empty tree for this directory level
+                new_builder = self.repo.TreeBuilder()
+                tree_id = new_builder.write()
+                current_tree = self.repo[tree_id]
             
-            # Process all directories except the last one (which is the file)
-            for i, part in enumerate(path_parts[:-1]):
-                current_path = "/".join(path_parts[:i+1])
-                
-                try:
-                    entry = current_tree[part]
-                    if isinstance(entry, pygit2.Tree):
-                        # Directory exists, get its tree
-                        current_tree = entry
-                    else:
-                        # Entry exists but is not a directory
-                        raise IOError(f"Path exists but is not a directory: {current_path}")
-                except KeyError:
-                    # Directory doesn't exist, create it
-                    subtree_builder = self.repo.TreeBuilder()
-                    subtree_id = subtree_builder.write()
-                    
-                    # Add the new subtree to the current tree
-                    builder.insert(part, subtree_id, pygit2.GIT_FILEMODE_TREE)
-                    
-                    # Update the current tree
-                    current_tree = self.repo[subtree_id]
+            # Create a builder for this level, copying existing entries
+            builder = self.repo.TreeBuilder(current_tree)
+            builders.append((part, builder))
         
-        # Add the file to the tree
+        # Insert the file into the final directory
         filename = path_parts[-1]
-        builder.insert(filename, blob_id, pygit2.GIT_FILEMODE_BLOB)
+        if builders:
+            last_builder = builders[-1][1]
+        else:
+            last_builder = self.repo.TreeBuilder(tree)
         
-        # Write the new tree
-        new_tree_id = builder.write()
+        last_builder.insert(filename, blob_id, pygit2.GIT_FILEMODE_BLOB)
+        current_tree_id = last_builder.write()
+        
+        # Work our way back up, creating new trees with the updated subtrees
+        for part, builder in reversed(builders[:-1]):
+            builder.insert(path_parts[builders.index((part, builder)) + 1], 
+                         current_tree_id, 
+                         pygit2.GIT_FILEMODE_TREE)
+            current_tree_id = builder.write()
+        
+        # Finally, update the root tree
+        if builders:
+            root_builder = self.repo.TreeBuilder(tree)
+            root_builder.insert(path_parts[0], current_tree_id, pygit2.GIT_FILEMODE_TREE)
+            final_tree_id = root_builder.write()
+        else:
+            # File is in the root directory
+            root_builder = self.repo.TreeBuilder(tree)
+            root_builder.insert(filename, blob_id, pygit2.GIT_FILEMODE_BLOB)
+            final_tree_id = root_builder.write()
         
         # Commit the changes
-        self._commit_changes(f"Update {path}", new_tree_id)
+        self._commit_changes(f"Write file: {path}", final_tree_id)
     
     def delete_file(self, path: str) -> None:
         """Delete a file from the storage.
@@ -220,23 +237,26 @@ class GitRepoTree(FileService):
         """
         import fnmatch
         
+        # Get the current tree
         tree = self._get_tree_from_branch()
-        files = []
         
-        # If directory is specified, get the subtree
+        # If a directory is specified, navigate to it
         if directory:
             try:
-                entry = tree[directory]
-                if isinstance(entry, pygit2.Tree):
-                    tree = entry
-                else:
-                    # Entry exists but is not a directory
-                    return []
+                current_tree = tree
+                for part in directory.split('/'):
+                    if not part:
+                        continue
+                    entry = current_tree[part]
+                    if not isinstance(entry, pygit2.Tree):
+                        return []
+                    current_tree = self.repo[entry.id]
+                tree = current_tree
             except KeyError:
-                # Directory doesn't exist
                 return []
         
-        # Helper function to recursively list files
+        files = []
+        
         def _list_files_recursive(tree, prefix=""):
             for entry in tree:
                 entry_path = f"{prefix}{entry.name}"
@@ -305,7 +325,7 @@ class GitRepoTree(FileService):
             path: Path to the file relative to the storage root
             
         Returns:
-            float: Last modified time as a timestamp
+            float: The last modified time of the file as a Unix timestamp
             
         Raises:
             FileNotFoundError: If the file does not exist
@@ -315,16 +335,29 @@ class GitRepoTree(FileService):
         
         # Get the commit history for the file
         branch = self.repo.branches[self.branch_name]
-        commit = self.repo[branch.target]
+        last_commit = None
+        last_commit_time = None
         
-        # Find the most recent commit that modified the file
-        walker = self.repo.walk(commit.id, pygit2.GIT_SORT_TIME)
-        for commit in walker:
-            if path in self._get_changed_files(commit):
-                return commit.commit_time
+        for commit in self.repo.walk(branch.target, pygit2.GIT_SORT_TIME):
+            try:
+                # Try to get the file from this commit
+                tree = commit.tree
+                for part in path.split('/'):
+                    tree = tree[part]
+                # If we got here, the file exists in this commit
+                commit_time = float(commit.commit_time)
+                if last_commit_time is None or commit_time > last_commit_time:
+                    last_commit = commit
+                    last_commit_time = commit_time
+            except KeyError:
+                continue
         
-        # If no commit found, use the repository creation time
-        return commit.commit_time
+        if last_commit is None:
+            # This should never happen as we checked file_exists
+            raise FileNotFoundError(f"File not found in commit history: {path}")
+        
+        return last_commit_time
+
     
     def _get_changed_files(self, commit) -> Set[str]:
         """Get the files changed in a commit.

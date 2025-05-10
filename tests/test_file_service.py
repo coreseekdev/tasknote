@@ -76,6 +76,14 @@ class FileServiceTestBase:
         content = self.fs.read_file("test.txt")
         self.assertEqual(content, test_content)
         
+        # Test writing to a file in a subdirectory
+        self.fs.create_directory("subdir")  # Ensure directory exists first
+        self.fs.write_file("subdir/test.txt", test_content)
+        
+        # Test reading from a file in a subdirectory
+        content = self.fs.read_file("subdir/test.txt")
+        self.assertEqual(content, test_content)
+        
         # Test reading a non-existent file
         with self.assertRaises(FileNotFoundError):
             self.fs.read_file("nonexistent.txt")
@@ -88,6 +96,10 @@ class FileServiceTestBase:
         # Test with an existing file
         self.fs.write_file("test.txt", "Hello, world!")
         self.assertTrue(self.fs.file_exists("test.txt"))
+        
+        # Test with a directory
+        self.fs.create_directory("testdir")
+        self.assertFalse(self.fs.file_exists("testdir"))  # Directories should return False
     
     def test_delete_file(self):
         """Test deleting files."""
@@ -110,6 +122,15 @@ class FileServiceTestBase:
         test_content = "Hello, directory!"
         self.fs.write_file("testdir/test.txt", test_content)
         
+        # Test creating nested directories
+        self.fs.create_directory("parent/child/grandchild")
+        
+        # Verify we can write to nested directories
+        nested_content = "Hello, nested directory!"
+        self.fs.write_file("parent/child/grandchild/test.txt", nested_content)
+        content = self.fs.read_file("parent/child/grandchild/test.txt")
+        self.assertEqual(content, nested_content)
+        
         # Test creating an existing directory (should not raise an error)
         self.fs.create_directory("testdir")
     
@@ -125,6 +146,12 @@ class FileServiceTestBase:
         files = sorted(self.fs.list_files())
         self.assertIn("test1.txt", files)
         self.assertIn("test2.txt", files)
+        
+        # Test with files in a subdirectory
+        self.fs.create_directory("subdir")
+        self.fs.write_file("subdir/test3.txt", "Hello, subdirectory!")
+        files = self.fs.list_files("subdir")
+        self.assertIn("subdir/test3.txt", files)
         
         # Test with a pattern
         self.fs.write_file("test3.md", "Markdown file")
@@ -147,6 +174,13 @@ class FileServiceTestBase:
         # Some implementations may return int, others float
         self.assertIsInstance(mtime, (float, int))
         self.assertGreater(mtime, 0)
+        
+        # Test that the modified time changes when the file is updated
+        import time
+        time.sleep(1)  # Ensure the timestamp will be different
+        self.fs.write_file("test.txt", "Updated content")
+        new_mtime = self.fs.get_modified_time("test.txt")
+        self.assertGreater(new_mtime, mtime)
 
 
 class TestLocalFilesystem(FileServiceTestBase, unittest.TestCase):
@@ -173,6 +207,62 @@ class TestLocalFilesystem(FileServiceTestBase, unittest.TestCase):
         fs = LocalFilesystem(new_dir)
         self.assertTrue(new_dir.exists())
         self.assertTrue(new_dir.is_dir())
+    
+    def test_file_path_verification(self):
+        """Test that files are created at the expected paths."""
+        # Test writing a file
+        test_content = "Hello, world!"
+        self.fs.write_file("test.txt", test_content)
+        
+        # Check that the file exists at the expected path
+        file_path = self.test_dir / "test.txt"
+        self.assertTrue(file_path.exists())
+        self.assertTrue(file_path.is_file())
+        
+        # Test writing to a file in a subdirectory
+        self.fs.create_directory("subdir")
+        self.fs.write_file("subdir/test.txt", test_content)
+        
+        # Check that the file exists at the expected path
+        file_path = self.test_dir / "subdir" / "test.txt"
+        self.assertTrue(file_path.exists())
+        self.assertTrue(file_path.is_file())
+        
+        # Test with nested directories
+        self.fs.create_directory("a/b/c")
+        self.fs.write_file("a/b/c/test.txt", test_content)
+        
+        # Check that the file exists at the expected path
+        file_path = self.test_dir / "a" / "b" / "c" / "test.txt"
+        self.assertTrue(file_path.exists())
+        self.assertTrue(file_path.is_file())
+    
+    def test_directory_structure(self):
+        """Test that directory structure is correctly maintained."""
+        # Create a complex directory structure
+        self.fs.create_directory("level1/level2/level3")
+        
+        # Verify the structure exists
+        dir_path = self.test_dir / "level1" / "level2" / "level3"
+        self.assertTrue(dir_path.exists())
+        self.assertTrue(dir_path.is_dir())
+        
+        # Create files at different levels
+        self.fs.write_file("level1/file1.txt", "Content 1")
+        self.fs.write_file("level1/level2/file2.txt", "Content 2")
+        self.fs.write_file("level1/level2/level3/file3.txt", "Content 3")
+        
+        # Verify files exist at correct locations
+        self.assertTrue((self.test_dir / "level1" / "file1.txt").exists())
+        self.assertTrue((self.test_dir / "level1" / "level2" / "file2.txt").exists())
+        self.assertTrue((self.test_dir / "level1" / "level2" / "level3" / "file3.txt").exists())
+        
+        # List files at different levels
+        level1_files = self.fs.list_files("level1")
+        self.assertIn("level1/file1.txt", level1_files)
+        
+        level3_files = self.fs.list_files("level1/level2/level3")
+        self.assertIn("level1/level2/level3/file3.txt", level3_files)
 
 
 class TestGitRepoTree(FileServiceTestBase, unittest.TestCase):
@@ -227,6 +317,65 @@ class TestGitRepoTree(FileServiceTestBase, unittest.TestCase):
         branch = self.repo.branches[config.get("git.branch_name")]
         new_commit = self.repo[branch.target]
         self.assertNotEqual(commit.id, new_commit.id)
+    
+    def test_git_tree_traversal(self):
+        """Test that the GitRepoTree correctly traverses the tree structure for nested paths."""
+        # Create a nested directory structure with files
+        self.fs.create_directory("dir1/dir2/dir3")
+        self.fs.write_file("dir1/file1.txt", "Content 1")
+        self.fs.write_file("dir1/dir2/file2.txt", "Content 2")
+        self.fs.write_file("dir1/dir2/dir3/file3.txt", "Content 3")
+        
+        # Test reading files at different levels
+        self.assertEqual(self.fs.read_file("dir1/file1.txt"), "Content 1")
+        self.assertEqual(self.fs.read_file("dir1/dir2/file2.txt"), "Content 2")
+        self.assertEqual(self.fs.read_file("dir1/dir2/dir3/file3.txt"), "Content 3")
+        
+        # Test file_exists at different levels
+        self.assertTrue(self.fs.file_exists("dir1/file1.txt"))
+        self.assertTrue(self.fs.file_exists("dir1/dir2/file2.txt"))
+        self.assertTrue(self.fs.file_exists("dir1/dir2/dir3/file3.txt"))
+        
+        # Test non-existent files in existing directories
+        self.assertFalse(self.fs.file_exists("dir1/nonexistent.txt"))
+        self.assertFalse(self.fs.file_exists("dir1/dir2/nonexistent.txt"))
+        
+        # Test listing files in nested directories
+        files = self.fs.list_files("dir1")
+        self.assertIn("dir1/file1.txt", files)
+        
+        files = self.fs.list_files("dir1/dir2")
+        self.assertIn("dir1/dir2/file2.txt", files)
+        
+        files = self.fs.list_files("dir1/dir2/dir3")
+        self.assertIn("dir1/dir2/dir3/file3.txt", files)
+    
+    def test_git_file_operations(self):
+        """Test file operations in GitRepoTree implementation."""
+        # Test writing and reading a file
+        self.fs.write_file("test.txt", "Initial content")
+        self.assertEqual(self.fs.read_file("test.txt"), "Initial content")
+        
+        # Test updating a file
+        self.fs.write_file("test.txt", "Updated content")
+        self.assertEqual(self.fs.read_file("test.txt"), "Updated content")
+        
+        # Test deleting a file
+        self.fs.delete_file("test.txt")
+        self.assertFalse(self.fs.file_exists("test.txt"))
+        
+        # Test that each operation created a commit
+        branch = self.repo.branches[config.get("git.branch_name")]
+        # Walk through the commit history
+        commit = self.repo[branch.target]
+        commit_count = 0
+        while commit.parents:
+            commit_count += 1
+            commit = commit.parents[0]
+        
+        # We should have at least 3 commits (initial + write + update + delete)
+        # Plus the initial repository setup
+        self.assertGreaterEqual(commit_count, 3)
 
 
 if __name__ == "__main__":
