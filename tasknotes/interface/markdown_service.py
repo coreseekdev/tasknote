@@ -1,11 +1,11 @@
 """Markdown document parsing service interface.
 
 This module defines the core interfaces for parsing markdown documents,
-providing access to structured elements like headers, lists, and frontmatter.
+providing access to structured elements like headers, lists, and metadata.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Iterator, Any, Optional, Tuple
+from typing import Dict, List, Iterator, Any, Optional, Tuple, TypeVar, Generic
 
 
 class ListItem(ABC):
@@ -94,19 +94,50 @@ class HeadSection(ABC):
         """Get all list blocks directly under this header section."""
 
 
+class DocumentMeta(ABC):
+    """Represents metadata from a markdown document.
+    
+    This interface provides access to:
+    - YAML frontmatter as key/value pairs
+    - The byte range of the metadata section for replacement
+    """
+    
+    @property
+    @abstractmethod
+    def data(self) -> Dict[str, Any]:
+        """Get the metadata as a dictionary of key/value pairs."""
+    
+    @property
+    @abstractmethod
+    def text_range(self) -> Tuple[int, int]:
+        """Get the start and end positions of the metadata section in bytes."""
+    
+    @abstractmethod
+    def get(self, key: str, default: Any = None) -> Any:
+        """Get a value from the metadata by key.
+        
+        Args:
+            key: The key to look up
+            default: Value to return if key is not found
+            
+        Returns:
+            The value associated with the key, or default if not found
+        """
+
+
 class MarkdownService(ABC):
     """Service interface for parsing and extracting markdown document structure."""
 
     @abstractmethod
-    def get_frontmatter(self, content: str) -> Dict[str, Any]:
-        """Extract and parse YAML frontmatter from markdown content.
+    def get_meta(self, content: str) -> DocumentMeta:
+        """Extract and parse metadata (YAML frontmatter) from markdown content.
         
         Args:
             content: The markdown document text to parse
             
         Returns:
-            A dictionary containing the parsed YAML frontmatter data.
-            Returns an empty dict if no frontmatter is present.
+            A DocumentMeta object providing access to the metadata and its position.
+            Returns an empty metadata object if no frontmatter is present.
         """
     
     @abstractmethod

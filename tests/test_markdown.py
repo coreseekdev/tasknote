@@ -15,10 +15,21 @@ priority: 1
 # Content
 Some content here
 """
-    frontmatter = service.get_frontmatter(content)
+    meta = service.get_meta(content)
+    frontmatter = meta.data
     assert frontmatter["title"] == "Test Document"
     assert frontmatter["tags"] == ["test", "markdown"]
     assert frontmatter["priority"] == 1
+    
+    # Test get method
+    assert meta.get("title") == "Test Document"
+    assert meta.get("nonexistent") is None
+    assert meta.get("nonexistent", "default") == "default"
+    
+    # Test text_range
+    start, end = meta.text_range
+    assert start == 0
+    assert end == content.index("# Content")  # Should end at the closing --- marker
 
 def test_headers_parsing():
     service = create_markdown_service()
@@ -103,8 +114,25 @@ def test_empty_document():
     service = create_markdown_service()
     content = ""
     
-    assert service.get_frontmatter(content) == {}
+    meta = service.get_meta(content)
+    assert meta.data == {}
+    assert meta.get("any_key") is None
+    start, end = meta.text_range
+    assert start == 0
+    assert end == 0
     assert len(list(service.get_headers(content))) == 0
+    
+def test_document_without_frontmatter():
+    service = create_markdown_service()
+    content = """# Just a header
+Some content without frontmatter
+"""
+    
+    meta = service.get_meta(content)
+    assert meta.data == {}
+    start, end = meta.text_range
+    assert start == 0
+    assert end == 0
 
 def test_no_matching_header():
     service = create_markdown_service()

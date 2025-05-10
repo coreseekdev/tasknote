@@ -14,7 +14,8 @@ from tasknotes.interface.markdown_service import (
     MarkdownService,
     HeadSection,
     ListBlock,
-    ListItem
+    ListItem,
+    DocumentMeta
 )
 
 @dataclass
@@ -135,6 +136,25 @@ class TreeSitterHeadSection(HeadSection):
         """Add a list block under this header."""
         self._lists.append(block)
 
+@dataclass
+class TreeSitterDocumentMeta(DocumentMeta):
+    """Tree-sitter implementation of markdown document metadata."""
+    _data: Dict[str, Any]
+    _start_pos: int
+    _end_pos: int
+    
+    @property
+    def data(self) -> Dict[str, Any]:
+        return self._data
+    
+    @property
+    def text_range(self) -> Tuple[int, int]:
+        return (self._start_pos, self._end_pos)
+    
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._data.get(key, default)
+
+
 class TreeSitterMarkdownService(MarkdownService):
     """Tree-sitter based implementation of the markdown service."""
     
@@ -242,8 +262,8 @@ class TreeSitterMarkdownService(MarkdownService):
             _ordered=is_ordered
         )
     
-    def get_frontmatter(self, content: str) -> Dict[str, Any]:
-        """Extract YAML frontmatter from the markdown content."""
+    def get_meta(self, content: str) -> DocumentMeta:
+        """Extract metadata (YAML frontmatter) from the markdown content."""
         tree = self.parser.parse(bytes(content, 'utf8'))
         root_node = tree.root_node
         
@@ -251,14 +271,27 @@ class TreeSitterMarkdownService(MarkdownService):
         for child in root_node.children:
             if child.type == 'minus_metadata':
                 yaml_text = content[child.start_byte:child.end_byte]
+                start_pos = child.start_byte
+                end_pos = child.end_byte
+                
                 try:
                     # PyYAML can handle documents with --- markers directly
                     for doc in yaml.safe_load_all(yaml_text):
                         if doc and isinstance(doc, dict):
-                            return doc
+                            return TreeSitterDocumentMeta(
+                                _data=doc,
+                                _start_pos=start_pos,
+                                _end_pos=end_pos
+                            )
                 except yaml.YAMLError:
                     pass
-        return {}
+                    
+        # Return empty metadata if no frontmatter found
+        return TreeSitterDocumentMeta(
+            _data={},
+            _start_pos=0,
+            _end_pos=0
+        )
     
     def get_headers(self, content: str) -> Iterator[HeadSection]:
         """Extract all headers from the markdown content.
