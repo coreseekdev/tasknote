@@ -89,6 +89,10 @@ class TreeSitterHeadSection(HeadSection):
     _level: int
     _start_pos: int
     _end_pos: int
+    _node: Any  # The tree-sitter node
+    _content: str  # The full markdown content
+    _service: Any  # Reference to the markdown service
+    _lists_processed: bool = False
     
     def __post_init__(self):
         self._lists: List[ListBlock] = []
@@ -106,7 +110,26 @@ class TreeSitterHeadSection(HeadSection):
         return (self._start_pos, self._end_pos)
     
     def get_lists(self) -> Iterator[ListBlock]:
+        # Lazy loading of lists
+        if not self._lists_processed:
+            self._process_lists()
         return iter(self._lists)
+    
+    def _process_lists(self) -> None:
+        """Process all lists under this header."""
+        # Find the section range
+        section_end = self._end_pos
+        
+        # Process all nodes in the section
+        current = self._node.next_sibling
+        while current and current.start_byte < section_end:
+            if current.type == 'list':
+                block = self._service._process_list_block(current, self._content, 0)
+                if block:
+                    self._lists.append(block)
+            current = current.next_sibling
+        
+        self._lists_processed = True
     
     def add_list(self, block: ListBlock) -> None:
         """Add a list block under this header."""
@@ -122,6 +145,102 @@ class TreeSitterMarkdownService(MarkdownService):
         # Create the parser with the markdown language
         self.parser = Parser()
         self.parser.language = Language(tsmarkdown.language())
+        
+    def _process_list_item(self, node, content: str, level: int) -> Optional[TreeSitterListItem]:
+        """Process a list item node and its nested content.
+        
+        Args:
+            node: The tree-sitter node representing the list item.
+            content: The full markdown content.
+            level: The nesting level of the list item.
+            
+        Returns:
+            A TreeSitterListItem object, or None if the node is not a valid list item.
+        """
+        text = ""
+        is_task = False
+        is_completed = None
+        order = None
+        
+        # Check if this is an ordered list item
+        raw_text = content[node.start_byte:node.end_byte]
+        ordered_match = re.match(r'^\s*(\d+)\.', raw_text)
+        if ordered_match:
+            order = int(ordered_match.group(1))
+        
+        # Process item content
+        for child in node.children:
+            if child.type == 'task_list_marker_checked':
+                is_task = True
+                is_completed = True
+            elif child.type == 'task_list_marker_unchecked':
+                is_task = True
+                is_completed = False
+            elif child.type == 'paragraph':
+                text = content[child.start_byte:child.end_byte].strip()
+        
+        # Remove list markers from text
+        text = re.sub(r'^\s*\d+\.\s+|^\s*[-*]\s+', '', text)
+        
+        # Create list item
+        item = TreeSitterListItem(
+            _text=text,
+            _level=level,
+            _start_pos=node.start_byte,
+            _end_pos=node.end_byte,
+            _is_task=is_task,
+            _is_completed=is_completed,
+            _order=order
+        )
+        
+        # Process nested lists
+        for child in node.children:
+            if child.type == 'list':
+                nested_block = self._process_list_block(child, content, level + 1)
+                if nested_block:
+                    item.add_nested_list(nested_block)
+        
+        return item
+    
+    def _process_list_block(self, node, content: str, level: int) -> Optional[TreeSitterListBlock]:
+        """Process a list node and its items.
+        
+        Args:
+            node: The tree-sitter node representing the list.
+            content: The full markdown content.
+            level: The nesting level of the list.
+            
+        Returns:
+            A TreeSitterListBlock object, or None if the node is not a valid list.
+        """
+        items = []
+        
+        # Determine if this is an ordered list
+        first_item = next((c for c in node.children if c.type == 'list_item'), None)
+        if not first_item:
+            return None
+            
+        raw_text = content[first_item.start_byte:first_item.end_byte]
+        is_ordered = bool(re.match(r'^\s*\d+\.', raw_text))
+        
+        # Process all items
+        for child in node.children:
+            if child.type == 'list_item':
+                item = self._process_list_item(child, content, level)
+                if item:
+                    items.append(item)
+        
+        if not items:
+            return None
+            
+        # Create list block
+        return TreeSitterListBlock(
+            _items=items,
+            _level=level,
+            _start_pos=node.start_byte,
+            _end_pos=node.end_byte,
+            _ordered=is_ordered
+        )
     
     def get_frontmatter(self, content: str) -> Dict[str, Any]:
         """Extract YAML frontmatter from the markdown content."""
@@ -140,165 +259,88 @@ class TreeSitterMarkdownService(MarkdownService):
                 except yaml.YAMLError:
                     pass
         return {}
-        
+    
     def get_headers(self, content: str) -> Iterator[HeadSection]:
-        """Extract all headers and their sections from the markdown content."""
+        """Extract all headers from the markdown content.
+        
+        This method only extracts the headers and doesn't process lists or other content.
+        Lists are processed lazily when HeadSection.get_lists() is called.
+        
+        Args:
+            content: The markdown content to parse.
+            
+        Returns:
+            An iterator of HeadSection objects.
+        """
         tree = self.parser.parse(bytes(content, 'utf8'))
         
-        def process_header_node(node) -> Optional[TreeSitterHeadSection]:
-            """Process a header node and extract its text and level."""
-            if node.type != 'atx_heading':
-                return None
-                
-            # Get header level (number of #)
-            level = 0
-            text = ""
+        # Find all header nodes
+        def find_headers(node):
+            if node.type == 'atx_heading':
+                header = self._process_header_node(node, content)
+                if header:
+                    yield header
+            
+            # Continue with children
             for child in node.children:
-                if child.type == 'atx_h1_marker':
-                    level = 1
-                elif child.type == 'atx_h2_marker':
-                    level = 2
-                elif child.type == 'atx_h3_marker':
-                    level = 3
-                elif child.type == 'atx_h4_marker':
-                    level = 4
-                elif child.type == 'atx_h5_marker':
-                    level = 5
-                elif child.type == 'atx_h6_marker':
-                    level = 6
-                elif child.type == 'inline':
-                    text = content[child.start_byte:child.end_byte].strip()
-            
-            if not level:
-                return None
-                
-            # Find the end of the section by looking for the next header
-            end_pos = len(content)
-            current = node
-            while current:
-                current = current.next_sibling
-                if current and current.type == 'atx_heading':
-                    end_pos = current.start_byte
-                    break
-                
-            # Create header section
-            return TreeSitterHeadSection(
-                _text=text,
-                _level=level,
-                _start_pos=node.start_byte,
-                _end_pos=end_pos
-            )
+                yield from find_headers(child)
         
-        def process_list_item(node, level: int) -> Optional[TreeSitterListItem]:
-            """Process a list item node and its nested content."""
-            text = ""
-            is_task = False
-            is_completed = None
-            order = None
-            
-            # Check if this is an ordered list item
-            raw_text = content[node.start_byte:node.end_byte]
-            ordered_match = re.match(r'^\s*(\d+)\.', raw_text)
-            if ordered_match:
-                order = int(ordered_match.group(1))
-            
-            # Process item content
-            for child in node.children:
-                if child.type == 'task_list_marker_checked':
-                    is_task = True
-                    is_completed = True
-                elif child.type == 'task_list_marker_unchecked':
-                    is_task = True
-                    is_completed = False
-                elif child.type == 'paragraph':
-                    text = content[child.start_byte:child.end_byte].strip()
-            
-            # Remove list markers from text
-            text = re.sub(r'^\s*\d+\.\s+|^\s*[-*]\s+', '', text)
-            
-            # Create list item
-            item = TreeSitterListItem(
-                _text=text,
-                _level=level,
-                _start_pos=node.start_byte,
-                _end_pos=node.end_byte,
-                _is_task=is_task,
-                _is_completed=is_completed,
-                _order=order
-            )
-            
-            # Process nested lists
-            for child in node.children:
-                if child.type == 'list':
-                    nested_block = process_list_block(child, level + 1)
-                    if nested_block:
-                        item.add_nested_list(nested_block)
-            
-            return item
+        yield from find_headers(tree.root_node)
+    
+    def _process_header_node(self, node, content: str) -> Optional[TreeSitterHeadSection]:
+        """Process a header node and extract its text and level.
         
-        def process_list_block(node, level: int) -> Optional[TreeSitterListBlock]:
-            """Process a list node and its items."""
-            items = []
+        Args:
+            node: The tree-sitter node representing the header.
+            content: The full markdown content.
             
-            # Determine if this is an ordered list
-            first_item = next((c for c in node.children if c.type == 'list_item'), None)
-            if not first_item:
-                return None
-                
-            raw_text = content[first_item.start_byte:first_item.end_byte]
-            is_ordered = bool(re.match(r'^\s*\d+\.', raw_text))
+        Returns:
+            A TreeSitterHeadSection object, or None if the node is not a valid header.
+        """
+        if node.type != 'atx_heading':
+            return None
             
-            # Process all items
-            for child in node.children:
-                if child.type == 'list_item':
-                    item = process_list_item(child, level)
-                    if item:
-                        items.append(item)
-            
-            if not items:
-                return None
-                
-            # Create list block
-            return TreeSitterListBlock(
-                _items=items,
-                _level=level,
-                _start_pos=node.start_byte,
-                _end_pos=node.end_byte,
-                _ordered=is_ordered
-            )
+        # Get header level (number of #)
+        level = 0
+        text = ""
+        for child in node.children:
+            if child.type == 'atx_h1_marker':
+                level = 1
+            elif child.type == 'atx_h2_marker':
+                level = 2
+            elif child.type == 'atx_h3_marker':
+                level = 3
+            elif child.type == 'atx_h4_marker':
+                level = 4
+            elif child.type == 'atx_h5_marker':
+                level = 5
+            elif child.type == 'atx_h6_marker':
+                level = 6
+            elif child.type == 'inline':
+                text = content[child.start_byte:child.end_byte].strip()
         
-        def visit_node(node, current_header: Optional[TreeSitterHeadSection] = None):
-            """Visit nodes and build the document structure."""
-            # Debug info
-            print(f"Visiting node: {node.type} at {node.start_byte}-{node.end_byte}")
-            if current_header:
-                print(f"Current header: {current_header.text} at {current_header.text_range}")
+        if not level:
+            return None
             
-            # Check if this is a header
-            header = process_header_node(node)
-            if header:
-                print(f"Found header: {header.text} at {header.text_range}")
-                yield header
-                current_header = header
+        # Find the end of the section by looking for the next header
+        end_pos = len(content)
+        current = node
+        while current:
+            current = current.next_sibling
+            if current and current.type == 'atx_heading':
+                end_pos = current.start_byte
+                break
             
-            # If we're under a header and find a list, add it to the header
-            if current_header and node.type == 'list':
-                print(f"Found list under {current_header.text}: {node.start_byte}-{node.end_byte}")
-                block = process_list_block(node, 0)
-                if block:
-                    print(f"Adding list to {current_header.text}")
-                    current_header.add_list(block)
-            
-            # Continue traversing
-            for child in node.children:
-                # Don't traverse into list items when we're already handling a list
-                if node.type == 'list' and child.type == 'list_item':
-                    continue
-                yield from visit_node(child, current_header)
-        
-        yield from visit_node(tree.root_node)
-        
-
+        # Create header section with node reference
+        return TreeSitterHeadSection(
+            _text=text,
+            _level=level,
+            _start_pos=node.start_byte,
+            _end_pos=end_pos,
+            _node=node,
+            _content=content,
+            _service=self
+        )
 
 
 def create_markdown_service() -> MarkdownService:
