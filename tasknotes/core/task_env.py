@@ -152,8 +152,7 @@ class TaskNoteEnv:
         if not self.is_tasknote_init():
             return None
             
-        tasknote_dir = self.repo_path / config.get("local.task_dir")
-        return create_file_service(tasknote_dir, self)
+        return find_file_service(self.repo_path, self)
     
     def tasknote_init(self, mode: Literal["LOCAL", "GIT"] = "LOCAL") -> bool:
         """Initialize TaskNotes in the repository.
@@ -227,7 +226,7 @@ class TaskNoteEnv:
             # Invalid mode
             raise ValueError(f"Invalid mode: {mode}. Must be 'LOCAL' or 'GIT'.")
 
-def create_file_service(path: str, env: Optional[TaskNoteEnv] = None) -> Optional[FileService]:
+def find_file_service(path: str, env: Optional[TaskNoteEnv] = None) -> Optional[FileService]:
     """Create a FileService instance based on the path and environment.
     
     Args:
@@ -256,5 +255,6 @@ def create_file_service(path: str, env: Optional[TaskNoteEnv] = None) -> Optiona
             return GitRepoTree(env)
     
     from .fs_local import LocalFilesystem
-    # Use LocalFilesystem as fallback
-    return LocalFilesystem(path)
+    # Use LocalFilesystem as fallback, with the correct path to the task directory
+    task_dir_path = Path(path) / config.get("local.task_dir")
+    return LocalFilesystem(task_dir_path)
