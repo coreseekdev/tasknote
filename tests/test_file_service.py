@@ -177,7 +177,7 @@ class FileServiceTestBase:
         
         # Test that the modified time changes when the file is updated
         import time
-        time.sleep(1)  # Ensure the timestamp will be different
+        time.sleep(0.1)  # Ensure the timestamp will be different
         self.fs.write_file("test.txt", "Updated content")
         new_mtime = self.fs.get_modified_time("test.txt")
         self.assertGreater(new_mtime, mtime)

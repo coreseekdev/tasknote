@@ -333,6 +333,8 @@ class GitRepoTree(FileService):
         if not self.file_exists(path):
             raise FileNotFoundError(f"File not found: {path}")
         
+        # FIXME: 当前的实现反映两次 commit 的时间戳相同，无法区分。
+
         # Get the commit history for the file
         branch = self.repo.branches[self.branch_name]
         last_commit = None
