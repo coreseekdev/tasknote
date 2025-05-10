@@ -90,9 +90,24 @@ class GitRepoTree(FileService):
         """
         tree = self._get_tree_from_branch()
         
+        # Handle paths with directories
+        path_parts = path.split('/')
+        current_tree = tree
+        
+        # Navigate through the directory structure
         try:
-            # Find the blob in the tree
-            blob = tree[path]
+            # If there are directories in the path, traverse them
+            for i, part in enumerate(path_parts[:-1]):
+                entry = current_tree[part]
+                if isinstance(entry, pygit2.Tree):
+                    current_tree = entry
+                else:
+                    raise FileNotFoundError(f"Path component is not a directory: {part}")
+            
+            # Get the file from the final directory
+            filename = path_parts[-1]
+            blob = current_tree[filename]
+            
             if isinstance(blob, pygit2.Blob):
                 return blob.data.decode("utf-8")
             else:
@@ -250,8 +265,22 @@ class GitRepoTree(FileService):
         """
         tree = self._get_tree_from_branch()
         
+        # Handle paths with directories
+        path_parts = path.split('/')
+        current_tree = tree
+        
         try:
-            entry = tree[path]
+            # If there are directories in the path, traverse them
+            for i, part in enumerate(path_parts[:-1]):
+                entry = current_tree[part]
+                if isinstance(entry, pygit2.Tree):
+                    current_tree = entry
+                else:
+                    return False  # Path component is not a directory
+            
+            # Check if the file exists in the final directory
+            filename = path_parts[-1]
+            entry = current_tree[filename]
             return isinstance(entry, pygit2.Blob)
         except KeyError:
             return False
