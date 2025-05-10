@@ -115,19 +115,6 @@ class ProjectService(ABC):
         pass
 
     @abstractmethod
-    def list_projects_by_tag(self, tag: str, include_archived: bool = False) -> List[dict]:
-        """List projects with a specific tag.
-        
-        Args:
-            tag: Tag to filter by
-            include_archived: If True, include archived projects in the list
-            
-        Returns:
-            List[dict]: List of project information dictionaries (same format as list_projects)
-        """
-        pass
-
-    @abstractmethod
     def reset_tags(self, project_id: str) -> bool:
         """Reset (remove all) tags from a project.
         

@@ -19,6 +19,22 @@ from tasknotes.core.project_meta import ProjectMeta
 from .markdown_task_service import MarkdownTaskService
 from .numbering_service import TaskNumberingService
 
+# 项目模板 - 用于创建新项目
+PROJECT_TEMPLATE = """# {name}
+
+{description}
+
+## Tasks
+
+## Milestones 
+
+## Kanban
+
+1. TODO
+2. DOING
+3. DONE
+
+"""
 
 class FileProjectService(ProjectService):
     """Implementation of ProjectService that uses FileService for storage.
@@ -55,11 +71,6 @@ class FileProjectService(ProjectService):
         # Initialize numbering service if not provided
         if self.numbering_service is None:
             self.numbering_service = TaskNumberingService(file_service)
-            
-        # Cache for project metadata
-        self._meta_cache: Dict[str, Tuple[Union[DocumentMeta, ProjectMeta], float]] = {}
-    
-
     
     def _get_project_tasks_path(self, project_id: str, archived: bool = False) -> str:
         """Get the path to a project's tasks file.
@@ -95,31 +106,12 @@ class FileProjectService(ProjectService):
             DocumentMeta or None: The document metadata object, or None if not found
         """
         tasks_path = self._get_project_tasks_path(project_id, archived)
-        cache_key = f"{tasks_path}:{archived}:doc"
-        
-        # Check if we have a cached version and if it's still valid
-        if cache_key in self._meta_cache:
-            meta, timestamp = self._meta_cache[cache_key]
-            try:
-                # Check if the file has been modified since we cached it
-                file_timestamp = self.file_service.get_modified_time(tasks_path)
-                if file_timestamp <= timestamp:
-                    return meta
-            except FileNotFoundError:
-                # File no longer exists, remove from cache
-                del self._meta_cache[cache_key]
-                return None
-        
+
         try:
             # Read the file and parse metadata
             content = self.file_service.read_file(tasks_path)
             markdown_service = self._get_markdown_service()
             meta = markdown_service.get_meta(content)
-            
-            # Cache the result with current timestamp
-            current_time = time.time()
-            self._meta_cache[cache_key] = (meta, current_time)
-            
             return meta
         except FileNotFoundError:
             return None
@@ -134,22 +126,6 @@ class FileProjectService(ProjectService):
         Returns:
             ProjectMeta or None: The project metadata object, or None if not found
         """
-        tasks_path = self._get_project_tasks_path(project_id, archived)
-        cache_key = f"{tasks_path}:{archived}:project"
-        
-        # Check if we have a cached version and if it's still valid
-        if cache_key in self._meta_cache:
-            meta, timestamp = self._meta_cache[cache_key]
-            try:
-                # Check if the file has been modified since we cached it
-                file_timestamp = self.file_service.get_modified_time(tasks_path)
-                if file_timestamp <= timestamp:
-                    return meta
-            except FileNotFoundError:
-                # File no longer exists, remove from cache
-                del self._meta_cache[cache_key]
-                return None
-        
         # Get the document metadata first
         doc_meta = self._get_document_meta(project_id, archived)
         if doc_meta is None:
@@ -165,11 +141,7 @@ class FileProjectService(ProjectService):
             _description=description,
             _doc_meta=doc_meta
         )
-        
-        # Cache the result with current timestamp
-        current_time = time.time()
-        self._meta_cache[cache_key] = (project_meta, current_time)
-        
+
         return project_meta
     
     def _extract_project_info(self, project_id: str, archived: bool = False) -> Tuple[str, str]:
@@ -213,7 +185,7 @@ class FileProjectService(ProjectService):
         
         return name, description
     
-    def _load_project_metadata(self, project_id: str, archived: bool = False) -> Optional[Dict]:
+    def _load_project_metadata(self, project_id: str, archived: bool = False) -> ProjectMeta:
         """Load a project's metadata from the markdown file's frontmatter.
         
         Args:
@@ -228,104 +200,34 @@ class FileProjectService(ProjectService):
             return None
         
         # Convert the ProjectMeta to a dictionary
-        return project_meta.to_dict()
+        return project_meta
     
-    def _save_project_metadata(self, project_id: str, metadata: Dict, archived: bool = False) -> None:
+    def _save_project_metadata(self, project_id: str, project_meta: ProjectMeta, archived: bool = False) -> None:
         """Save a project's metadata to the markdown file's frontmatter.
         
         Args:
             project_id: ID of the project
-            metadata: Project metadata
+            project_meta: The project metadata to save
             archived: Whether the project is archived
         """
         tasks_path = self._get_project_tasks_path(project_id, archived)
-        doc_cache_key = f"{tasks_path}:{archived}:doc"
-        project_cache_key = f"{tasks_path}:{archived}:project"
         
         try:
-            # Import here to avoid circular imports
+            # 导入 EditSession
             from tasknotes.core.edit_session_ot import EditSessionOT
-            
-            # 先尝试获取缓存的 project_meta 对象
-            project_meta = self._get_project_meta(project_id, archived)
             
             # 读取文件内容创建编辑会话
             content = self.file_service.read_file(tasks_path)
             edit_session = EditSessionOT(content)
             
-            # 如果没有缓存的 project_meta 对象，则创建一个新的
-            if project_meta is None:
-                markdown_service = self._get_markdown_service()
-                doc_meta = markdown_service.get_meta(content)
-                name, description = self._extract_project_info(project_id, archived)
-                project_meta = ProjectMeta(
-                    _id=project_id,
-                    _name=name,
-                    _description=description,
-                    _doc_meta=doc_meta
-                )
-            
-            # 更新元数据 (只更新 DocumentMeta 中的数据，不更新 id 和 name)
-            for key, value in metadata.items():
-                if key not in ['id', 'name']:
-                    if key == 'description':
-                        project_meta.description = value
-                    else:
-                        project_meta.set_meta(key, value)
-            
             # 应用更改并获取更新后的内容
-            updated_content = project_meta.apply(edit_session, self.file_service, tasks_path)
+            updated_content = project_meta.apply(edit_session)
             
             # 保存更新后的内容
             self.file_service.write_file(tasks_path, updated_content)
-            
-            # 更新缓存
-            current_time = time.time()
-            self._meta_cache[project_cache_key] = (project_meta, current_time)
-            self._meta_cache[doc_cache_key] = (project_meta.doc_meta, current_time)
+
         except FileNotFoundError:
-            # If the file doesn't exist, create it with the metadata
-            from tasknotes.core.edit_session_ot import EditSessionOT
-            
-            # Create a basic markdown file with the metadata
-            name = metadata.get('name', 'Untitled Project')
-            description = metadata.get('description', '')
-            
-            # Create content with name and description
-            content = f"# {name}\n"
-            if description:
-                content += f"\n{description}\n"
-            content += "\n## Tasks\n\n## Tag Collections\n\n"
-            
-            edit_session = EditSessionOT(content)
-            
-            # Create metadata and save it
-            markdown_service = self._get_markdown_service()
-            doc_meta = markdown_service.get_meta(content)
-            
-            # Create a ProjectMeta object
-            project_meta = ProjectMeta(
-                _id=project_id,
-                _name=name,
-                _description=description,
-                _doc_meta=doc_meta
-            )
-            
-            # Update metadata (excluding id and name)
-            for key, value in metadata.items():
-                if key not in ['id', 'name', 'description']:
-                    project_meta.set_meta(key, value)
-            
-            # 应用更改并获取更新后的内容
-            updated_content = project_meta.apply(edit_session, self.file_service, tasks_path)
-            
-            # 保存更新后的内容
-            self.file_service.write_file(tasks_path, updated_content)
-            
-            # 更新缓存
-            current_time = time.time()
-            self._meta_cache[project_cache_key] = (project_meta, current_time)
-            self._meta_cache[doc_cache_key] = (project_meta.doc_meta, current_time)
+            pass # 简单忽略
     
     def create_project(self, name: str, description: Optional[str] = None) -> str:
         """Create a new project.
@@ -349,25 +251,34 @@ class FileProjectService(ProjectService):
         # Generate a new project ID using the numbering service
         project_id = self.numbering_service.get_next_number()
         
-        # Create the project metadata - only store creation time and tags in metadata
-        # project_id comes from the filename, name from the first header, description from the header text
-        metadata = {
-            "created_at": time.time(),
-            "tags": []
-        }
+        # 使用模板创建项目内容
+        content = PROJECT_TEMPLATE.format(
+            name=name,
+            description=description or ""
+        )
         
-        # Create the markdown content with the project name and description
-        content = f"# {name}\n"
-        if description:
-            content += f"\n{description}\n"
-        content += "\n## Tasks\n\n## Tag Collections\n\n"
-        
-        # Create the project file
+        # 创建项目文件
         tasks_path = self._get_project_tasks_path(project_id)
         self.file_service.write_file(tasks_path, content)
         
-        # Save the metadata (this will update the file with frontmatter)
-        self._save_project_metadata(project_id, metadata)
+        # 读取文件并解析元数据
+        markdown_service = self._get_markdown_service()
+        doc_meta = markdown_service.get_meta(content)
+        
+        # 创建 ProjectMeta 对象
+        project_meta = ProjectMeta(
+            _id=project_id,
+            _name=name,
+            _description=description or "",
+            _doc_meta=doc_meta
+        )
+        
+        # 设置创建时间和初始标签
+        project_meta.set_meta("created_at", time.time())
+        project_meta.set_meta("tags", [])
+        
+        # 保存元数据
+        self._save_project_metadata(project_id, project_meta)
         
         return project_id
     
@@ -381,12 +292,12 @@ class FileProjectService(ProjectService):
             bool: True if the project was archived, False if not found
         """
         # Check if the project exists
-        metadata = self._load_project_metadata(project_id)
-        if metadata is None:
+        project_meta = self._load_project_metadata(project_id)
+        if project_meta is None:
             return False
         
         # Update metadata with archive timestamp
-        metadata["archived_at"] = time.time()
+        project_meta.set_meta("archived_at", time.time())
         
         # Get the paths
         tasks_path = self._get_project_tasks_path(project_id)
@@ -398,15 +309,7 @@ class FileProjectService(ProjectService):
             self.file_service.rename(tasks_path, archived_tasks_path)
             
             # Save updated metadata to the archived location
-            self._save_project_metadata(project_id, metadata, archived=True)
-        
-        # Clear the cache for the active project
-        doc_cache_key = f"{tasks_path}:False:doc"
-        project_cache_key = f"{tasks_path}:False:project"
-        if doc_cache_key in self._meta_cache:
-            del self._meta_cache[doc_cache_key]
-        if project_cache_key in self._meta_cache:
-            del self._meta_cache[project_cache_key]
+            self._save_project_metadata(project_id, project_meta, archived=True)
         
         return True
     
@@ -429,14 +332,6 @@ class FileProjectService(ProjectService):
             
             # Delete the file
             self.file_service.delete_file(tasks_path)
-            
-            # Clear the cache
-            doc_cache_key = f"{tasks_path}:True:doc"
-            project_cache_key = f"{tasks_path}:True:project"
-            if doc_cache_key in self._meta_cache:
-                del self._meta_cache[doc_cache_key]
-            if project_cache_key in self._meta_cache:
-                del self._meta_cache[project_cache_key]
                 
             return 1
         else:
@@ -451,15 +346,6 @@ class FileProjectService(ProjectService):
                 for file_path in md_files:
                     full_path = os.path.join(self.archived_dir, file_path)
                     self.file_service.delete_file(full_path)
-                    
-                    # Clear the cache
-                    doc_cache_key = f"{full_path}:True:doc"
-                    project_cache_key = f"{full_path}:True:project"
-                    if doc_cache_key in self._meta_cache:
-                        del self._meta_cache[doc_cache_key]
-                    if project_cache_key in self._meta_cache:
-                        del self._meta_cache[project_cache_key]
-            
             return len(md_files)
     
     def list_projects(self, include_archived: bool = False) -> List[Dict]:
@@ -479,10 +365,12 @@ class FileProjectService(ProjectService):
             project_id = os.path.splitext(os.path.basename(file))[0]
             
             # Load project metadata
-            metadata = self._load_project_metadata(project_id)
-            if metadata is not None:
-                metadata["archived"] = False
-                projects.append(metadata)
+            project_meta = self._load_project_metadata(project_id)
+            if project_meta is not None:
+                # 转换为字典并添加归档标志
+                project_dict = project_meta.to_dict()
+                project_dict["archived"] = False
+                projects.append(project_dict)
         
         # List archived projects if requested
         if include_archived:
@@ -491,42 +379,38 @@ class FileProjectService(ProjectService):
                 project_id = os.path.splitext(os.path.basename(file))[0]
                 
                 # Load project metadata
-                metadata = self._load_project_metadata(project_id, archived=True)
-                if metadata is not None:
-                    metadata["archived"] = True
-                    projects.append(metadata)
+                project_meta = self._load_project_metadata(project_id, archived=True)
+                if project_meta is not None:
+                    # 转换为字典并添加归档标志
+                    project_dict = project_meta.to_dict()
+                    project_dict["archived"] = True
+                    projects.append(project_dict)
         
         # Sort projects by name
         projects.sort(key=lambda p: p.get("name", ""))
         
         return projects
     
-    def get_task_service(self, project_id: str) -> TaskService:
-        """Get a TaskService instance for a project.
+    def get_task_service(self, project_id: str) -> Optional[TaskService]:
+        """Get a task service for a project.
         
         Args:
             project_id: ID of the project
             
         Returns:
-            TaskService: Task service for the project
-            
-        Raises:
-            ValueError: If the project doesn't exist or is archived
+            TaskService or None: A task service for the project, or None if not found
         """
-        # Check if the project exists and is not archived
-        metadata = self._load_project_metadata(project_id)
-        if metadata is None:
+        # Check if the project exists
+        project_meta = self._load_project_metadata(project_id)
+        if project_meta is None:
             # Check if it's an archived project
             if self._load_project_metadata(project_id, archived=True) is not None:
                 raise ValueError(f"Project {project_id} is archived")
-            else:
-                raise ValueError(f"Project {project_id} does not exist")
+            return None
         
-        # Get the path to the project's tasks file
+        # Create a task service for the project
         tasks_path = self._get_project_tasks_path(project_id)
-        
-        # Create and return a TaskService for the project
-        return MarkdownTaskService(tasks_path)
+        return MarkdownTaskService(self.file_service, tasks_path)
     
     def add_tag(self, project_id: str, tag: str) -> bool:
         """Add a tag to a project.
@@ -536,23 +420,28 @@ class FileProjectService(ProjectService):
             tag: Tag to add
             
         Returns:
-            bool: True if the tag was added, False if the project doesn't exist
-                 or is archived
+            bool: True if the tag was added, False if not found or already exists
         """
-        # Load project metadata
-        metadata = self._load_project_metadata(project_id)
-        if metadata is None:
+        # Check if the project exists
+        project_meta = self._load_project_metadata(project_id)
+        if project_meta is None:
             return False
         
-        # Add the tag if it doesn't already exist
-        if tag not in metadata.get("tags", []):
-            if "tags" not in metadata:
-                metadata["tags"] = []
-            metadata["tags"].append(tag)
-            
-            # Save updated metadata
-            self._save_project_metadata(project_id, metadata)
+        # Get current tags
+        tags = project_meta.tags
         
+        # Check if the tag already exists
+        if tag in tags:
+            return False
+        
+        # Add the tag
+        if tag not in tags:
+            tags.append(tag)
+            project_meta.tags = tags
+            
+            # Save the updated metadata
+            self._save_project_metadata(project_id, project_meta)
+            
         return True
     
     def remove_tag(self, project_id: str, tag: str) -> bool:
@@ -563,75 +452,64 @@ class FileProjectService(ProjectService):
             tag: Tag to remove
             
         Returns:
-            bool: True if the tag was removed, False if the project doesn't exist,
-                 is archived, or didn't have the tag
+            bool: True if the tag was removed, False if not found
         """
-        # Load project metadata
-        metadata = self._load_project_metadata(project_id)
-        if metadata is None:
+        # Check if the project exists
+        project_meta = self._load_project_metadata(project_id)
+        if project_meta is None:
             return False
         
-        # Remove the tag if it exists
-        if tag in metadata.get("tags", []):
-            metadata["tags"].remove(tag)
+        # Get current tags
+        tags = project_meta.tags
+        
+        # Check if the tag exists
+        if tag in tags:
+                    
+            # Remove the tag
+            tags.remove(tag)
+            project_meta.tags = tags
             
-            # Save updated metadata
-            self._save_project_metadata(project_id, metadata)
-            return True
+            # Save the updated metadata
+            self._save_project_metadata(project_id, project_meta)
         
-        return False
-    
-    def list_projects_by_tag(self, tag: str, include_archived: bool = False) -> List[Dict]:
-        """List projects with a specific tag.
-        
-        Args:
-            tag: Tag to filter by
-            include_archived: If True, include archived projects in the list
-            
-        Returns:
-            List[dict]: List of project information dictionaries
-        """
-        # Get all projects
-        all_projects = self.list_projects(include_archived=include_archived)
-        
-        # Filter projects by tag
-        return [p for p in all_projects if tag in p.get("tags", [])]
-    
-    def reset_tags(self, project_id: str) -> bool:
-        """Reset (remove all) tags from a project.
+        return True
+      
+    def reset_tags(self, project_id: str, tags: List[str]) -> bool:
+        """Reset all tags for a project.
         
         Args:
             project_id: ID of the project
+            tags: New list of tags
             
         Returns:
-            bool: True if the tags were reset, False if the project doesn't exist
-                 or is archived
+            bool: True if the tags were reset, False if not found
         """
-        # Load project metadata
-        metadata = self._load_project_metadata(project_id)
-        if metadata is None:
+        # Check if the project exists
+        project_meta = self._load_project_metadata(project_id)
+        if project_meta is None:
             return False
         
-        # Reset tags
-        metadata["tags"] = []
+        # Reset the tags
+        project_meta.tags = tags
         
-        # Save updated metadata
-        self._save_project_metadata(project_id, metadata)
+        # Save the updated metadata
+        self._save_project_metadata(project_id, project_meta)
         
         return True
     
-    def get_tags(self, project_id: str) -> Set[str]:
-        """Get all tags associated with a project.
+    def get_tags(self, project_id: str) -> Optional[List[str]]:
+        """Get all tags for a project.
         
         Args:
             project_id: ID of the project
             
         Returns:
-            Set[str]: Set of tags. Empty set if the project doesn't exist or is archived.
+            List[str] or None: List of tags, or None if not found
         """
-        # Load project metadata
-        metadata = self._load_project_metadata(project_id)
-        if metadata is None:
-            return set()
+        # Check if the project exists
+        project_meta = self._load_project_metadata(project_id)
+        if project_meta is None:
+            return None
         
-        return set(metadata.get("tags", []))
+        # Return the tags
+        return project_meta.tags

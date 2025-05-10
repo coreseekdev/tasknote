@@ -53,6 +53,7 @@ class ProjectMeta:
         Args:
             value: The new description
         """
+        # 考虑不允许编程修改 description ，直接通过 文本编辑器修改。
         self._description = value
     
     @property
@@ -137,7 +138,7 @@ class ProjectMeta:
         
         return result
     
-    def apply(self, edit_session: EditSession, file_service: FileService, path: str) -> str:
+    def apply(self, edit_session: EditSession) -> str:
         """Apply the metadata changes to the file.
         
         This method delegates to the document metadata's apply method.
@@ -150,4 +151,4 @@ class ProjectMeta:
         Returns:
             str: The updated content
         """
-        return self._doc_meta.apply(edit_session, file_service, path)
+        return self._doc_meta.apply(edit_session)
