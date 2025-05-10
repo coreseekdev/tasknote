@@ -7,6 +7,9 @@ from pathlib import Path
 import pygit2
 from pygit2.repository import RepositoryOpenFlag
 
+# Import config
+from .config import config
+
 # Import FileService from interface package
 from tasknotes.interface.file_service import FileService
 
@@ -81,7 +84,7 @@ class TaskNoteEnv:
         # 不需要额外检查 is_git_repo ， 因为支持 本地目录的方式
 
         # Check if .tasknote directory exists
-        tasknote_dir = self.repo_path / ".tasknote"
+        tasknote_dir = self.repo_path / config.get("local.task_dir")
         if tasknote_dir.exists() and tasknote_dir.is_dir():
             return True
         
@@ -89,7 +92,7 @@ class TaskNoteEnv:
         if self._repo is not None:
             # Look for a branch with 'tasknote' in the name
             for branch in self._repo.branches:
-                if "tasknote" in branch.lower():
+                if config.get("git.branch_name") in branch.lower():
                     return True
                     
         return False
@@ -101,16 +104,16 @@ class TaskNoteEnv:
             pygit2.Signature: Signature with user name and email
         """
         # Default values
-        user_name = "TaskNotes User"
-        user_email = "user@tasknotes"
+        user_name = config.get("git.user_name")
+        user_email = config.get("git.user_email")
         
         if self._repo is not None:
             try:
                 # Try to get user name and email from repository config
-                config = self._repo.config
+                repo_config = self._repo.config
                 try:
-                    user_name = config["user.name"]
-                    user_email = config["user.email"]
+                    user_name = repo_config["user.name"]
+                    user_email = repo_config["user.email"]
                 except KeyError:
                     pass
             except (pygit2.GitError, KeyError):
@@ -149,7 +152,7 @@ class TaskNoteEnv:
         if not self.is_tasknote_init():
             return None
             
-        tasknote_dir = self.repo_path / ".tasknote"
+        tasknote_dir = self.repo_path / config.get("local.task_dir")
         return create_file_service(tasknote_dir, self)
     
     def tasknote_init(self, mode: Literal["LOCAL", "GIT"] = "LOCAL") -> bool:
@@ -174,11 +177,12 @@ class TaskNoteEnv:
         # Initialize based on mode
         if mode == "LOCAL":
             # Create .tasknote directory
-            tasknote_dir = self.repo_path / ".tasknote"
+            tasknote_dir = self.repo_path / config.get("local.task_dir")
             try:
-                os.makedirs(tasknote_dir, exist_ok=True)
+                tasknote_dir.mkdir(exist_ok=True)
                 return True
-            except Exception:
+            except Exception as e:
+                print(f"Error creating TaskNotes directory: {str(e)}")
                 return False
         elif mode == "GIT":
             # Check if this is a git repository
@@ -186,37 +190,34 @@ class TaskNoteEnv:
                 return False
             
             try:
+                # Get user signature
+                author = self._get_user_signature()
+                
                 # Create an empty tree
                 empty_tree_id = self._repo.TreeBuilder().write()
                 
-                # Get user signature
-                author = self._get_user_signature()
-                committer = author
-                message = "Initialize TaskNotes"
-                
-                # Get the first commit as parent if it exists, otherwise create an orphan commit
+                # Get parent commits if HEAD exists
                 parent_commits = []
                 try:
-                    # Try to get the HEAD commit as parent
                     head = self._repo.head
-                    parent_commits = [self._repo[head.target].id]
+                    parent_commits = [head.target]
                 except (pygit2.GitError, KeyError):
                     # Repository might be empty, create orphan commit
                     pass
+                    
+                # Create the commit on a new branch directly
+                branch_name = config.get("git.branch_name")
+                reference_name = f"refs/heads/{branch_name}"
                 
                 # Create the commit
                 commit_id = self._repo.create_commit(
-                    None,  # Don't update any reference yet
+                    reference_name,  # Create commit directly on the new branch
                     author,
-                    committer,
-                    message,
+                    author,
+                    "Initial TaskNotes commit",
                     empty_tree_id,
                     parent_commits
                 )
-                
-                # Create the branch pointing to the commit
-                branch_name = "tasknote"
-                self._repo.create_branch(branch_name, self._repo[commit_id])
                 
                 return True
             except Exception as e:
@@ -249,7 +250,7 @@ def create_file_service(path: str, env: Optional[TaskNoteEnv] = None) -> Optiona
     if env.is_git_repo():
         # Check if there's a tasknote branch
         repo = env._repo
-        if "tasknote" in repo.branches:
+        if config.get("git.branch_name") in repo.branches:
             from .fs_git import GitRepoTree
             # Use GitRepoTree if there's a tasknote branch
             return GitRepoTree(env)

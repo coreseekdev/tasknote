@@ -78,6 +78,9 @@ class TestTaskNoteEnv(unittest.TestCase):
         
         # Check that tasknote branch exists
         self.assertIn("tasknote", env._repo.branches)
+        
+        # Verify .tasknote directory doesn't exist for GIT mode
+        self.assertFalse(os.path.exists(os.path.join(repo_path, ".tasknote")))
 
     def test_get_user_signature(self):
         """Test getting user signature."""
