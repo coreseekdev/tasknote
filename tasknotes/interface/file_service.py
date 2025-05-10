@@ -110,4 +110,18 @@ class FileService(ABC):
             FileNotFoundError: If the file does not exist
         """
         pass
+    
+    @abstractmethod
+    def rename(self, old_path: str, new_path: str) -> None:
+        """Rename a file or move it to a new location.
+        
+        Args:
+            old_path: Current path of the file relative to the storage root
+            new_path: New path for the file relative to the storage root
+            
+        Raises:
+            FileNotFoundError: If the source file does not exist
+            FileExistsError: If the destination file already exists
+        """
+        pass
 

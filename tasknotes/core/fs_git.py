@@ -202,28 +202,57 @@ class GitRepoTree(FileService):
         if not self.file_exists(path):
             raise FileNotFoundError(f"File not found: {path}")
         
-        # Create a new tree with the file removed
+        # Get the current tree
         tree = self._get_tree_from_branch()
-        builder = self.repo.TreeBuilder(tree)
         
-        # Remove the file from the tree
+        # Split the path into parts
         path_parts = path.split("/")
         filename = path_parts[-1]
         
         # If the file is in a subdirectory, we need to update the subtree
         if len(path_parts) > 1:
-            # TODO: Implement removal from subtrees
-            # This is more complex and requires recursive tree building
-            raise NotImplementedError("Deletion from subdirectories not yet implemented")
+            # Create a new tree by recursively updating the subtrees
+            new_tree_id = self._delete_from_subtree(tree, path_parts, 0)
         else:
             # Remove the file from the root tree
+            builder = self.repo.TreeBuilder(tree)
             builder.remove(filename)
-        
-        # Write the new tree
-        new_tree_id = builder.write()
+            new_tree_id = builder.write()
         
         # Commit the changes
         self._commit_changes(f"Delete {path}", new_tree_id)
+    
+    def _delete_from_subtree(self, tree, path_parts, index):
+        """Recursively delete a file from a subtree.
+        
+        Args:
+            tree: Current tree to process
+            path_parts: List of path components
+            index: Current index in path_parts
+            
+        Returns:
+            pygit2.Oid: ID of the new tree
+        """
+        if index == len(path_parts) - 1:
+            # We've reached the file to delete
+            builder = self.repo.TreeBuilder(tree)
+            builder.remove(path_parts[index])
+            return builder.write()
+        
+        # Get the subtree for the current path component
+        subtree_entry = tree[path_parts[index]]
+        if not isinstance(subtree_entry, pygit2.Tree):
+            raise ValueError(f"Path component is not a directory: {path_parts[index]}")
+        
+        # Recursively update the subtree
+        new_subtree_id = self._delete_from_subtree(subtree_entry, path_parts, index + 1)
+        
+        # Create a new tree with the updated subtree
+        builder = self.repo.TreeBuilder(tree)
+        builder.remove(path_parts[index])  # Remove the old subtree
+        builder.insert(path_parts[index], new_subtree_id, pygit2.GIT_FILEMODE_TREE)  # Add the new subtree
+        
+        return builder.write()
     
     def list_files(self, directory: str = "", pattern: str = "*") -> List[str]:
         """List files in a directory.
@@ -360,6 +389,42 @@ class GitRepoTree(FileService):
         
         return last_commit_time
 
+    
+    def rename(self, old_path: str, new_path: str) -> None:
+        """Rename a file or move it to a new location.
+        
+        Args:
+            old_path: Current path of the file relative to the storage root
+            new_path: New path for the file relative to the storage root
+            
+        Raises:
+            FileNotFoundError: If the source file does not exist
+            FileExistsError: If the destination file already exists
+        """
+        # Check if source file exists
+        if not self.file_exists(old_path):
+            raise FileNotFoundError(f"Source file not found: {old_path}")
+        
+        # Check if destination file already exists
+        if self.file_exists(new_path):
+            raise FileExistsError(f"Destination file already exists: {new_path}")
+        
+        # Read the content of the source file
+        content = self.read_file(old_path)
+        
+        # Create parent directories for the destination if needed
+        new_dir = "/".join(new_path.split("/")[:-1])
+        if new_dir and not any(self.list_files(new_dir)):
+            self.create_directory(new_dir)
+        
+        # Write the content to the new location
+        self.write_file(new_path, content)
+        
+        # Delete the old file
+        self.delete_file(old_path)
+        
+        # Commit the changes
+        self._commit_changes(f"Renamed {old_path} to {new_path}", self._get_tree_from_branch().id)
     
     def _get_changed_files(self, commit) -> Set[str]:
         """Get the files changed in a commit.

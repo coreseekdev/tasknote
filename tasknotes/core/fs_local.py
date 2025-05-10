@@ -141,4 +141,32 @@ class LocalFilesystem(FileService):
             raise FileNotFoundError(f"File not found: {path}")
         
         return full_path.stat().st_mtime
+    
+    def rename(self, old_path: str, new_path: str) -> None:
+        """Rename a file or move it to a new location.
+        
+        Args:
+            old_path: Current path of the file relative to the storage root
+            new_path: New path for the file relative to the storage root
+            
+        Raises:
+            FileNotFoundError: If the source file does not exist
+            FileExistsError: If the destination file already exists
+        """
+        old_full_path = self._get_full_path(old_path)
+        new_full_path = self._get_full_path(new_path)
+        
+        # Check if source file exists
+        if not old_full_path.exists() or not old_full_path.is_file():
+            raise FileNotFoundError(f"Source file not found: {old_path}")
+        
+        # Check if destination file already exists
+        if new_full_path.exists():
+            raise FileExistsError(f"Destination file already exists: {new_path}")
+        
+        # Create parent directories for the destination if they don't exist
+        os.makedirs(new_full_path.parent, exist_ok=True)
+        
+        # Perform the rename/move operation
+        old_full_path.rename(new_full_path)
 

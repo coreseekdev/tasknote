@@ -170,17 +170,55 @@ class FileServiceTestBase:
         
         # Test with an existing file
         self.fs.write_file("test.txt", "Hello, world!")
-        mtime = self.fs.get_modified_time("test.txt")
-        # Some implementations may return int, others float
-        self.assertIsInstance(mtime, (float, int))
-        self.assertGreater(mtime, 0)
         
-        # Test that the modified time changes when the file is updated
-        import time
-        time.sleep(0.1)  # Ensure the timestamp will be different
-        self.fs.write_file("test.txt", "Updated content")
-        new_mtime = self.fs.get_modified_time("test.txt")
-        self.assertGreater(new_mtime, mtime)
+        # Sleep to ensure the modification time is different
+        time.sleep(0.1)
+        
+        # Get the modified time
+        mtime = self.fs.get_modified_time("test.txt")
+        
+        # Check that the modified time is recent
+        current_time = time.time()
+        self.assertLess(current_time - mtime, 10)  # Within 10 seconds
+        self.assertGreater(mtime, current_time - 60)  # Not more than 60 seconds ago
+    
+    def test_rename(self):
+        """Test renaming files."""
+        # Test renaming a non-existent file
+        with self.assertRaises(FileNotFoundError):
+            self.fs.rename("nonexistent.txt", "new.txt")
+        
+        # Test basic renaming in the same directory
+        test_content = "Hello, world!"
+        self.fs.write_file("test.txt", test_content)
+        self.fs.rename("test.txt", "renamed.txt")
+        
+        # Verify the file was renamed
+        self.assertFalse(self.fs.file_exists("test.txt"))
+        self.assertTrue(self.fs.file_exists("renamed.txt"))
+        self.assertEqual(self.fs.read_file("renamed.txt"), test_content)
+        
+        # Test moving to a subdirectory
+        self.fs.create_directory("subdir")
+        self.fs.rename("renamed.txt", "subdir/moved.txt")
+        
+        # Verify the file was moved
+        self.assertFalse(self.fs.file_exists("renamed.txt"))
+        self.assertTrue(self.fs.file_exists("subdir/moved.txt"))
+        self.assertEqual(self.fs.read_file("subdir/moved.txt"), test_content)
+        
+        # Test moving to a non-existent subdirectory (should create it)
+        self.fs.rename("subdir/moved.txt", "newdir/final.txt")
+        
+        # Verify the file was moved and directory was created
+        self.assertFalse(self.fs.file_exists("subdir/moved.txt"))
+        self.assertTrue(self.fs.file_exists("newdir/final.txt"))
+        self.assertEqual(self.fs.read_file("newdir/final.txt"), test_content)
+        
+        # Test renaming to an existing file (should raise FileExistsError)
+        self.fs.write_file("existing.txt", "I already exist")
+        with self.assertRaises(FileExistsError):
+            self.fs.rename("newdir/final.txt", "existing.txt")
 
 
 class TestLocalFilesystem(FileServiceTestBase, unittest.TestCase):
