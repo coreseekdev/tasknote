@@ -26,10 +26,14 @@ class EditSession(ABC):
         """
         self.original_content = content
         self.current_content = content
-        self.session_id = session_id if session_id is not None else str(uuid.uuid4())
+        self._session_id = session_id if session_id is not None else str(uuid.uuid4())
         self.created_at = time.time()
         self.last_modified = self.created_at
     
+    @property
+    def session_id(self):
+        return self._session_id
+
     @abstractmethod
     def insert(self, position: int, text: str) -> str:
         """Insert text at the specified position.

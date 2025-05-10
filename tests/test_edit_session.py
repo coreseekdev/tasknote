@@ -3,23 +3,23 @@
 import unittest
 import time
 import uuid
-from tasknotes.core.task_env import connect_edit_service
-from tasknotes.core.edit_session_ot import Operation
+from tasknotes.core.edit_service import new_edit_service
+
 
 class TestEditSession(unittest.TestCase):
     def setUp(self):
         self.initial_content = "Hello world!"
-        self.session = connect_edit_service("", self.initial_content)
+        self.session = new_edit_service("", self.initial_content)
 
     def test_init_with_custom_session_id(self):
         """Test initialization with a custom session_id."""
         custom_id = "test-session-123"
-        session = connect_edit_service("", self.initial_content, session_id=custom_id)
+        session = new_edit_service("", self.initial_content, session_id=custom_id)
         self.assertEqual(session.session_id, custom_id)
 
     def test_init_with_default_session_id(self):
         """Test initialization with default UUID session_id."""
-        session = connect_edit_service("", self.initial_content)
+        session = new_edit_service("", self.initial_content)
         # Verify it's a valid UUID
         try:
             uuid.UUID(session.session_id)
@@ -58,7 +58,7 @@ class TestEditSession(unittest.TestCase):
 
         # Delete from middle
         content = "Hello beautiful world!"
-        session = connect_edit_service("", content)
+        session = new_edit_service("", content)
         self.assertEqual(
             session.delete(6, 15),
             "Hello world!"
@@ -80,7 +80,7 @@ class TestEditSession(unittest.TestCase):
 
         # Replace in middle
         content = "Hello beautiful world!"
-        session = connect_edit_service("", content)
+        session = new_edit_service("", content)
         self.assertEqual(
             session.replace(6, 15, "amazing"),
             "Hello amazing world!"
@@ -111,13 +111,13 @@ class TestEditSession(unittest.TestCase):
     def test_edge_cases(self):
         """Test edge cases and extreme situations."""
         # Empty content
-        session = connect_edit_service("", "")
+        session = new_edit_service("", "")
         self.assertEqual(session.insert(0, "test"), "test")
         self.assertEqual(session.delete(0, 4), "")
         
         # Very long content
         long_content = "a" * 1000000
-        session = connect_edit_service("", long_content)
+        session = new_edit_service("", long_content)
         # Insert at start
         self.assertEqual(
             session.insert(0, "test"),
@@ -135,7 +135,7 @@ class TestEditSession(unittest.TestCase):
         
         # Special characters
         content = "Hello world!"
-        session = connect_edit_service("", content)
+        session = new_edit_service("", content)
         # Insert newlines and tabs
         self.assertEqual(
             session.insert(5, "\n\t"),
@@ -149,7 +149,7 @@ class TestEditSession(unittest.TestCase):
         
         # Unicode characters
         content = "Hello 世界！"
-        session = connect_edit_service("", content)
+        session = new_edit_service("", content)
         # Insert unicode
         self.assertEqual(
             session.insert(6, "美丽的"),
@@ -162,7 +162,7 @@ class TestEditSession(unittest.TestCase):
         )
         
         # Multiple operations at same position
-        session = connect_edit_service("", "test")
+        session = new_edit_service("", "test")
         # Insert multiple times at same position
         session.insert(0, "1")
         session.insert(0, "2")
@@ -174,7 +174,7 @@ class TestEditSession(unittest.TestCase):
         self.assertEqual(session.current_content, "1test")
         
         # Replace with empty and non-empty strings
-        session = connect_edit_service("", "Hello world!")
+        session = new_edit_service("", "Hello world!")
         # Replace with empty (equivalent to delete)
         self.assertEqual(
             session.replace(5, 11, ""),
@@ -219,7 +219,7 @@ class TestEditSession(unittest.TestCase):
 
     def test_timestamps(self):
         """Test timestamp tracking."""
-        session = connect_edit_service("", self.initial_content)
+        session = new_edit_service("", self.initial_content)
         initial_time = session.created_at
         initial_modified = session.last_modified
         

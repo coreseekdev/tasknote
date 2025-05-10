@@ -7,7 +7,7 @@ using operational transformation for handling concurrent edits.
 from dataclasses import dataclass
 from typing import Dict, Any, List, Optional
 import time
-from ..interface.edit_session import EditSession
+from ..interface import EditSession
 
 
 @dataclass
