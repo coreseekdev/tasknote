@@ -258,3 +258,22 @@ def find_file_service(path: str, env: Optional[TaskNoteEnv] = None) -> Optional[
     # Use LocalFilesystem as fallback, with the correct path to the task directory
     task_dir_path = Path(path) / config.get("local.task_dir")
     return LocalFilesystem(task_dir_path)
+
+# 似乎应该单独构造一个文件
+
+from .edit_session_ot import EditSessionOT
+from ..interface.edit_session import EditSession
+
+
+def connect_edit_service(filename: str, context: str, session_id: Optional[str] = None) -> EditSession:
+    """Connect to an edit service for the given file.
+    
+    Args:
+        filename: Name of the file to edit (currently unused)
+        context: Initial content for the edit session
+        session_id: Optional session ID for the edit session
+        
+    Returns:
+        EditSession: An edit session instance
+    """
+    return EditSessionOT(context, session_id)
