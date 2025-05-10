@@ -335,28 +335,27 @@ class GitRepoTree(FileService):
         
         # Get the commit history for the file
         branch = self.repo.branches[self.branch_name]
-        last_commit = None
-        last_commit_time = None
+        commit_times = []
+        print("Commits containing file:", path)
         
-        for commit in self.repo.walk(branch.target, pygit2.GIT_SORT_TIME):
+        # First, find all commits that contain this file
+        for commit in self.repo.walk(branch.target, pygit2.GIT_SORT_NONE):
             try:
-                # Try to get the file from this commit
                 tree = commit.tree
                 for part in path.split('/'):
                     tree = tree[part]
                 # If we got here, the file exists in this commit
-                commit_time = float(commit.commit_time)
-                if last_commit_time is None or commit_time > last_commit_time:
-                    last_commit = commit
-                    last_commit_time = commit_time
+                commit_times.append(commit.commit_time)
+                print(f"  {commit.id}: {commit.commit_time} ({time.ctime(commit.commit_time)})")
             except KeyError:
                 continue
         
-        if last_commit is None:
+        if not commit_times:
             # This should never happen as we checked file_exists
             raise FileNotFoundError(f"File not found in commit history: {path}")
         
-        return last_commit_time
+        # Get the most recent commit time
+        return float(max(commit_times))
 
     
     def _get_changed_files(self, commit) -> Set[str]:
