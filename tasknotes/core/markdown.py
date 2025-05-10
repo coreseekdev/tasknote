@@ -10,6 +10,9 @@ import re
 from dataclasses import dataclass
 from tree_sitter import Language, Parser
 
+from tasknotes.interface.file_service import FileService
+from tasknotes.interface.edit_session import EditSession, EditOperation
+
 from tasknotes.interface.markdown_service import (
     MarkdownService,
     HeadSection,
@@ -153,6 +156,41 @@ class TreeSitterDocumentMeta(DocumentMeta):
     
     def get(self, key: str, default: Any = None) -> Any:
         return self._data.get(key, default)
+    
+    def set(self, key: str, value: Any) -> None:
+        """Set a value in the metadata by key.
+        
+        Args:
+            key: The key to set
+            value: The value to set for the key
+        """
+        self._data[key] = value
+    
+    def apply(self, edit_session: EditSession, file_service: FileService, path: str) -> None:
+        """Apply the metadata changes to the file.
+        
+        This method writes the modified metadata back to the file using
+        the provided EditSession and FileService.
+        
+        Args:
+            edit_session: An EditSession instance for modifying the file content
+            file_service: A FileService instance for saving the file
+            path: The path to the file to update
+        """
+        # Convert metadata to YAML format
+        yaml_text = "---\n" + yaml.safe_dump(self._data, default_flow_style=False) + "---\n"
+        
+        # If there's existing metadata, replace it; otherwise insert at the beginning
+        if self._start_pos < self._end_pos:
+            # Replace existing metadata
+            op = edit_session.replace(self._start_pos, self._end_pos, yaml_text)
+        else:
+            # Insert at the beginning of the file
+            op = edit_session.insert(0, yaml_text)
+        
+        # Get the updated content and save it using the file service
+        updated_content = edit_session.get_content()
+        file_service.write_file(path, updated_content)
 
 
 class TreeSitterMarkdownService(MarkdownService):

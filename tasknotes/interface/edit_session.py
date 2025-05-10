@@ -4,9 +4,24 @@ This module provides the abstract interface for edit sessions.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, NamedTuple
 import uuid
 import time
+
+
+class EditOperation(NamedTuple):
+    """Represents an editing operation similar to Operational Transformation.
+    
+    Attributes:
+        text: Text to be added/inserted
+        start: Start position of the operation
+        end: End position of the operation (if start == end, it's an insertion)
+        length: The length of the content after applying the operation (for validation)
+    """
+    text: str
+    start: int
+    end: int
+    length: int
 
 
 class EditSession(ABC):
@@ -35,7 +50,7 @@ class EditSession(ABC):
         return self._session_id
 
     @abstractmethod
-    def insert(self, position: int, text: str) -> str:
+    def insert(self, position: int, text: str) -> EditOperation:
         """Insert text at the specified position.
         
         Args:
@@ -43,7 +58,7 @@ class EditSession(ABC):
             text: Text to insert
             
         Returns:
-            str: The content after inserting
+            EditOperation: The operation that was performed
             
         Raises:
             ValueError: If the position is invalid
@@ -51,7 +66,7 @@ class EditSession(ABC):
         pass
     
     @abstractmethod
-    def delete(self, start: int, end: int) -> str:
+    def delete(self, start: int, end: int) -> EditOperation:
         """Delete text between start and end positions.
         
         Args:
@@ -59,7 +74,7 @@ class EditSession(ABC):
             end: End position
             
         Returns:
-            str: The content after deleting
+            EditOperation: The operation that was performed
             
         Raises:
             ValueError: If the positions are invalid
@@ -67,7 +82,7 @@ class EditSession(ABC):
         pass
     
     @abstractmethod
-    def replace(self, start: int, end: int, text: str) -> str:
+    def replace(self, start: int, end: int, text: str) -> EditOperation:
         """Replace text between start and end positions.
         
         Args:
@@ -76,7 +91,7 @@ class EditSession(ABC):
             text: Replacement text
             
         Returns:
-            str: The content after replacing
+            EditOperation: The operation that was performed
             
         Raises:
             ValueError: If the positions are invalid
@@ -84,11 +99,11 @@ class EditSession(ABC):
         pass
     
     @abstractmethod
-    def get_edit_history(self) -> List[Dict[str, Any]]:
+    def get_edit_history(self) -> List[EditOperation]:
         """Get the history of operations.
         
         Returns:
-            List[Dict[str, Any]]: List of operations as dictionaries
+            List[EditOperation]: List of edit operations
         """
         pass
     

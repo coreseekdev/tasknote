@@ -7,7 +7,7 @@ using operational transformation for handling concurrent edits.
 from dataclasses import dataclass
 from typing import Dict, Any, List, Optional
 import time
-from ..interface import EditSession
+from ..interface import EditSession, EditOperation
 
 
 @dataclass
@@ -18,6 +18,7 @@ class Operation:
     - start: start position of the operation
     - end: end position of the operation
     - text: text to insert
+    - length: the length of the content after applying the operation (for validation)
     
     The operation type is determined by:
     - If start == end and text is not empty: INSERT
@@ -28,6 +29,7 @@ class Operation:
     start: int   # Start position of the operation
     end: int     # End position of the operation
     text: str    # Text to insert
+    length: int = 0  # Length of the content after applying the operation
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert the operation to a dictionary.
@@ -38,7 +40,8 @@ class Operation:
         return {
             "start": self.start,
             "end": self.end,
-            "text": self.text
+            "text": self.text,
+            "length": self.length
         }
     
     @classmethod
@@ -54,7 +57,8 @@ class Operation:
         return cls(
             start=data["start"],
             end=data["end"],
-            text=data["text"]
+            text=data["text"],
+            length=data.get("length", 0)  # Handle older data that might not have length
         )
 
 
@@ -88,11 +92,14 @@ class EditSessionOT(EditSession):
             # If we're deleting and the next character is a space, skip it
             self.current_content = before + after[1:]
         
+        # Update the length of the operation to reflect the new content length
+        operation.length = len(self.current_content)
+        
         # Record the operation
         self.operations.append(operation)
         self.last_modified = time.time()
     
-    def insert(self, position: int, text: str) -> str:
+    def insert(self, position: int, text: str) -> EditOperation:
         """Insert text at the specified position.
         
         Args:
@@ -100,7 +107,7 @@ class EditSessionOT(EditSession):
             text: Text to insert
             
         Returns:
-            str: The content after inserting
+            EditOperation: The operation that was performed
             
         Raises:
             ValueError: If the position is invalid
@@ -110,9 +117,16 @@ class EditSessionOT(EditSession):
         
         operation = Operation(start=position, end=position, text=text)
         self._apply_operation(operation)
-        return self.current_content
+        
+        # Create and return an EditOperation using the operation's calculated length
+        return EditOperation(
+            text=text,
+            start=position,
+            end=position,
+            length=operation.length
+        )
     
-    def delete(self, start: int, end: int) -> str:
+    def delete(self, start: int, end: int) -> EditOperation:
         """Delete text between start and end positions.
         
         Args:
@@ -120,7 +134,7 @@ class EditSessionOT(EditSession):
             end: End position
             
         Returns:
-            str: The content after deleting
+            EditOperation: The operation that was performed
             
         Raises:
             ValueError: If the positions are invalid
@@ -132,9 +146,16 @@ class EditSessionOT(EditSession):
         
         operation = Operation(start=start, end=end, text="")
         self._apply_operation(operation)
-        return self.current_content
+        
+        # Create and return an EditOperation using the operation's calculated length
+        return EditOperation(
+            text="",
+            start=start,
+            end=end,
+            length=operation.length
+        )
     
-    def replace(self, start: int, end: int, text: str) -> str:
+    def replace(self, start: int, end: int, text: str) -> EditOperation:
         """Replace text between start and end positions.
         
         Args:
@@ -143,7 +164,7 @@ class EditSessionOT(EditSession):
             text: Replacement text
             
         Returns:
-            str: The content after replacing
+            EditOperation: The operation that was performed
             
         Raises:
             ValueError: If the positions are invalid
@@ -155,14 +176,28 @@ class EditSessionOT(EditSession):
         
         operation = Operation(start=start, end=end, text=text)
         self._apply_operation(operation)
-        return self.current_content
+        
+        # Create and return an EditOperation using the operation's calculated length
+        return EditOperation(
+            text=text,
+            start=start,
+            end=end,
+            length=operation.length
+        )
 
-    def get_edit_history(self) -> List[Dict[str, Any]]:
+    def get_edit_history(self) -> List[EditOperation]:
         """Get the history of operations.
         
         Returns:
-            List[Dict[str, Any]]: List of operations as dictionaries
+            List[EditOperation]: List of edit operations
         """
-        return [op.to_dict() for op in self.operations]
+        return [
+            EditOperation(
+                text=op.text,
+                start=op.start,
+                end=op.end,
+                length=op.length  # Use the stored length from when the operation was applied
+            ) for op in self.operations
+        ]
     
 

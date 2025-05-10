@@ -123,6 +123,28 @@ class DocumentMeta(ABC):
         Returns:
             The value associated with the key, or default if not found
         """
+    
+    @abstractmethod
+    def set(self, key: str, value: Any) -> None:
+        """Set a value in the metadata by key.
+        
+        Args:
+            key: The key to set
+            value: The value to set for the key
+        """
+    
+    @abstractmethod
+    def apply(self, edit_session: Any, file_service: Any, path: str) -> None:
+        """Apply the metadata changes to the file.
+        
+        This method writes the modified metadata back to the file using
+        the provided EditSession and FileService.
+        
+        Args:
+            edit_session: An EditSession instance for modifying the file content
+            file_service: A FileService instance for saving the file
+            path: The path to the file to update
+        """
 
 
 class MarkdownService(ABC):

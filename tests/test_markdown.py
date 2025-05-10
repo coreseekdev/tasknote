@@ -1,7 +1,12 @@
 import pytest
+import os
 from typing import Iterator, Optional
+from unittest.mock import MagicMock, patch
+
 from tasknotes.core.markdown import create_markdown_service
 from tasknotes.interface.markdown_service import HeadSection, ListBlock, ListItem
+from tasknotes.interface.edit_session import EditOperation
+from tasknotes.interface.file_service import FileService
 
 def test_frontmatter_parsing():
     service = create_markdown_service()
@@ -303,3 +308,70 @@ def test_nested_lists():
     assert nav_items[1].text == "Breadcrumbs"
     assert nav_items[1].is_task
     assert not nav_items[1].is_completed_task
+
+
+def test_document_meta_set_and_apply():
+    """Test the set and apply methods of DocumentMeta."""
+    service = create_markdown_service()
+    
+    # Test with existing frontmatter
+    content = """---
+title: Original Title
+tags:
+  - original
+  - tags
+---
+# Content
+Some content here
+"""
+    
+    # Create mock EditSession
+    mock_edit_session = MagicMock()
+    mock_edit_session.replace.return_value = EditOperation(text="new yaml", start=0, end=len(content), length=len(content))
+    mock_edit_session.insert.return_value = EditOperation(text="new yaml", start=0, end=0, length=len(content) + 10)
+    mock_edit_session.get_content.return_value = "updated content"
+    
+    # Create mock FileService
+    mock_file_service = MagicMock(spec=FileService)
+    
+    # Get metadata and modify it
+    meta = service.get_meta(content)
+    
+    # Test the set method
+    meta.set("title", "Updated Title")
+    meta.set("priority", 1)
+    meta.set("tags", ["updated", "metadata"])
+    
+    # Verify the changes in the data
+    assert meta.get("title") == "Updated Title"
+    assert meta.get("priority") == 1
+    assert meta.get("tags") == ["updated", "metadata"]
+    
+    # Test apply method with existing frontmatter
+    file_path = "/path/to/file.md"
+    meta.apply(mock_edit_session, mock_file_service, file_path)
+    
+    # Verify that replace was called since we had existing frontmatter
+    start, end = meta.text_range
+    mock_edit_session.replace.assert_called_once()
+    mock_file_service.write_file.assert_called_once_with(file_path, "updated content")
+    
+    # Reset mocks for the next test
+    mock_edit_session.reset_mock()
+    mock_file_service.reset_mock()
+    
+    # Test with no frontmatter
+    content_no_meta = """# Content
+Some content here
+"""
+    
+    meta_empty = service.get_meta(content_no_meta)
+    meta_empty.set("title", "New Title")
+    meta_empty.set("author", "Test Author")
+    
+    # Apply changes
+    meta_empty.apply(mock_edit_session, mock_file_service, file_path)
+    
+    # Verify that insert was called since we had no existing frontmatter
+    mock_edit_session.insert.assert_called_once()
+    mock_file_service.write_file.assert_called_once_with(file_path, "updated content")
