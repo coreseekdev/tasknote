@@ -349,12 +349,17 @@ Some content here
     
     # Test apply method with existing frontmatter
     file_path = "/path/to/file.md"
-    meta.apply(mock_edit_session, mock_file_service, file_path)
+    result = meta.apply(mock_edit_session)
     
     # Verify that replace was called since we had existing frontmatter
     start, end = meta.text_range
     mock_edit_session.replace.assert_called_once()
-    mock_file_service.write_file.assert_called_once_with(file_path, "updated content")
+    
+    # Verify that the method returns the updated content
+    assert result == "updated content"
+    
+    # Verify that the file service was NOT called (apply no longer writes to file)
+    mock_file_service.write_file.assert_not_called()
     
     # Reset mocks for the next test
     mock_edit_session.reset_mock()
@@ -370,8 +375,13 @@ Some content here
     meta_empty.set("author", "Test Author")
     
     # Apply changes
-    meta_empty.apply(mock_edit_session, mock_file_service, file_path)
+    result = meta_empty.apply(mock_edit_session)
     
     # Verify that insert was called since we had no existing frontmatter
     mock_edit_session.insert.assert_called_once()
-    mock_file_service.write_file.assert_called_once_with(file_path, "updated content")
+    
+    # Verify that the method returns the updated content
+    assert result == "updated content"
+    
+    # Verify that the file service was NOT called (apply no longer writes to file)
+    mock_file_service.write_file.assert_not_called()

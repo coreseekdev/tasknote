@@ -166,7 +166,7 @@ class TreeSitterDocumentMeta(DocumentMeta):
         """
         self._data[key] = value
     
-    def apply(self, edit_session: EditSession, file_service: FileService, path: str) -> None:
+    def apply(self, edit_session: EditSession) -> str:
         """Apply the metadata changes to the file.
         
         This method writes the modified metadata back to the file using
@@ -188,9 +188,8 @@ class TreeSitterDocumentMeta(DocumentMeta):
             # Insert at the beginning of the file
             op = edit_session.insert(0, yaml_text)
         
-        # Get the updated content and save it using the file service
-        updated_content = edit_session.get_content()
-        file_service.write_file(path, updated_content)
+        # 返回更新后的内容，让调用者决定是否保存
+        return edit_session.get_content()
 
 
 class TreeSitterMarkdownService(MarkdownService):

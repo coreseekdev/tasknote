@@ -134,7 +134,7 @@ class DocumentMeta(ABC):
         """
     
     @abstractmethod
-    def apply(self, edit_session: Any, file_service: Any, path: str) -> None:
+    def apply(self, edit_session: Any) -> str:
         """Apply the metadata changes to the file.
         
         This method writes the modified metadata back to the file using
@@ -142,8 +142,6 @@ class DocumentMeta(ABC):
         
         Args:
             edit_session: An EditSession instance for modifying the file content
-            file_service: A FileService instance for saving the file
-            path: The path to the file to update
         """
 
 
