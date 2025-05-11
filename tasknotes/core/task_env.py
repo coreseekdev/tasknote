@@ -83,12 +83,8 @@ class TaskNoteEnv:
             return False
             
         branch_name = config.get("git.branch_name")
-        try:
-            # Check if the branch exists
-            self._repo.lookup_branch(branch_name)
-            return True
-        except (pygit2.GitError, KeyError):
-            return False
+        # In pygit2, branches is a dictionary-like object with branch names as keys
+        return branch_name in self._repo.branches
     
     def is_tasknote_init(self) -> bool:
         """Check if TaskNotes has been initialized in the repository.
@@ -260,8 +256,7 @@ def find_file_service(path: str, env: Optional[TaskNoteEnv] = None) -> Optional[
     # Check if the repository is a git repository
     if env.is_git_repo():
         # Check if there's a tasknote branch
-        repo = env._repo
-        if config.get("git.branch_name") in repo.branches:
+        if env.has_tasknote_branch():
             from .fs_git import GitRepoTree
             # Use GitRepoTree if there's a tasknote branch
             return GitRepoTree(env)

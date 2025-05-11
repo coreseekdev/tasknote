@@ -9,7 +9,7 @@ from tasknotes.core.task_env import TaskNoteEnv
 class AddCmd(BaseCmd):
     """Command to add a new task to the current active task."""
     
-    def execute(self, cmd_service: 'CmdService', task_env: TaskNoteEnv) -> CmdResult:
+    def _execute_impl(self, cmd_service: 'CmdService', task_env: TaskNoteEnv) -> CmdResult:
         """Execute the add command.
         
         Args:

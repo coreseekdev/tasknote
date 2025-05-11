@@ -9,7 +9,7 @@ from tasknotes.core.task_env import TaskNoteEnv
 class ArchiveCmd(BaseCmd):
     """Command to archive a specified task."""
     
-    def execute(self, cmd_service: 'CmdService', task_env: TaskNoteEnv) -> CmdResult:
+    def _execute_impl(self, cmd_service: 'CmdService', task_env: TaskNoteEnv) -> CmdResult:
         """Execute the archive command.
         
         Args:

@@ -9,7 +9,7 @@ from tasknotes.core.task_env import TaskNoteEnv
 class SearchCmd(BaseCmd):
     """Command to search for tasks and notes."""
     
-    def execute(self, cmd_service: 'CmdService', task_env: TaskNoteEnv) -> CmdResult:
+    def _execute_impl(self, cmd_service: 'CmdService', task_env: TaskNoteEnv) -> CmdResult:
         """Execute the search command.
         
         Args:

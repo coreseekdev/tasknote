@@ -110,24 +110,15 @@ def default_formatter(result, console, rich_available):
             print(json.dumps(result.data, indent=2))
 
 
-# Import formatters
-from tasknotes.cli.formatters import (
-    format_init_result,
-    format_list_result,
-    format_search_result
-)
+# Import command modules and their formatters
+from tasknotes.cli.cmd_init import setup_init_parser, format_init_result
+from tasknotes.cli.cmd_list import setup_list_parser, format_list_result
+from tasknotes.cli.cmd_search import setup_search_parser, format_search_result
 
-# Register formatters for specific commands
-register_formatter("init", format_init_result)
-register_formatter("list", format_list_result)
-register_formatter("search", format_search_result)
-
-# Import all command modules
-from tasknotes.cli.cmd_init import setup_init_parser
+# Import other command modules
 from tasknotes.cli.cmd_add import setup_add_parser
 from tasknotes.cli.cmd_note import setup_note_parser
 from tasknotes.cli.cmd_edit import setup_edit_parser
-from tasknotes.cli.cmd_list import setup_list_parser
 from tasknotes.cli.cmd_archive import setup_archive_parser
 from tasknotes.cli.cmd_remove import setup_remove_parser
 from tasknotes.cli.cmd_open import setup_open_parser
@@ -135,9 +126,13 @@ from tasknotes.cli.cmd_active import setup_active_parser
 from tasknotes.cli.cmd_close import setup_close_parser
 from tasknotes.cli.cmd_done import setup_done_parser
 from tasknotes.cli.cmd_tag import setup_tag_parser
-from tasknotes.cli.cmd_search import setup_search_parser
 from tasknotes.cli.cmd_help import setup_help_parser
 from tasknotes.cli.cmd_mcp import setup_mcp_parser
+
+# Register formatters for specific commands
+register_formatter("init", format_init_result)
+register_formatter("list", format_list_result)
+register_formatter("search", format_search_result)
 
 
 def is_debug_mode() -> bool:
