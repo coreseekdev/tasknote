@@ -273,13 +273,14 @@ Some notes here.
         self.assertIn("## Tasks", updated_content)
         self.assertIn("- [ ] TASK-001: Test task with empty section", updated_content)
         
-        # 在当前实现中，任务被添加到了 Notes 部分之后
-        # 这是因为我们的 _append_task_to_list 方法在处理没有列表的情况时的行为
+        # 修复 header text_range 后，任务现在正确地被添加到 Tasks 部分内
+        tasks_section_pos = updated_content.find("## Tasks")
         notes_section_pos = updated_content.find("## Notes")
         task_pos = updated_content.find("- [ ] TASK-001: Test task with empty section")
         
-        # 验证任务在 Notes 部分之后
-        self.assertGreater(task_pos, notes_section_pos)
+        # 验证任务在 Tasks 部分之后，但在 Notes 部分之前
+        self.assertGreater(task_pos, tasks_section_pos)
+        self.assertLess(task_pos, notes_section_pos)
         
         # 验证返回的 InlineTask 是否正确
         self.assertEqual(sub_task.task_id, "TASK-001")
