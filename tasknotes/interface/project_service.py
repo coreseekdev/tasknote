@@ -6,7 +6,7 @@ This module defines the interface for managing projects in TaskNotes.
 from abc import ABC, abstractmethod
 from typing import List, Optional, Set
 
-from .task_service import TaskService
+from .task_service import FileTask
 
 
 class ProjectService(ABC):
@@ -72,14 +72,14 @@ class ProjectService(ABC):
         pass
 
     @abstractmethod
-    def get_task_service(self, project_id: str) -> TaskService:
-        """Get a TaskService instance for a project.
+    def get_task(self, project_id: str) -> Optional[FileTask]:
+        """Get a FileTask instance for a project.
         
         Args:
             project_id: ID of the project
             
         Returns:
-            TaskService: Task service for the project
+            FileTask: Task service for the project
             
         Raises:
             ValueError: If the project doesn't exist or is archived

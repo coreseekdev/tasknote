@@ -5,205 +5,221 @@ This module defines the interface for managing tasks within projects.
 """
 
 from abc import ABC, abstractmethod
-from datetime import datetime
+from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Union
+from typing import Dict, List, Optional, Union, Any
 
+from tasknotes.interface.file_service import FileService
 
-class TaskService(ABC):
-    """Interface for managing tasks within a project."""
-
+class Task(ABC):
+    """
+    Abstract base class for all types of tasks.
+    
+    This class defines the common interface that all task implementations must provide.
+    """
+    
+    @property
     @abstractmethod
-    def __init__(self, file_path: Union[str, Path], content: Optional[str] = None) -> None:
+    def task_id(self) -> str:
+        """Get the task ID."""
+        pass
+    
+    @abstractmethod
+    def mark_as_done(self) -> bool:
         """
-        Initialize a TaskService instance from a file or content.
-
+        Mark the task as done.
+        
+        Returns:
+            bool: True if the operation was successful, False otherwise
+        """
+        pass
+    
+    @abstractmethod
+    def mark_as_undone(self) -> bool:
+        """
+        Mark the task as not done.
+        
+        Returns:
+            bool: True if the operation was successful, False otherwise
+        """
+        pass
+    
+    @abstractmethod
+    def delete(self, force: bool = False) -> bool:
+        """
+        Delete the task.
+        
         Args:
-            file_path: Path to the markdown file representing the project
-            content: Optional content to use instead of reading from file_path
+            force: If True, force deletion even if there are dependencies
+            
+        Returns:
+            bool: True if the operation was successful, False otherwise
         """
         pass
-
+    
     @abstractmethod
-    def add_task(self, task_description: str, tags: Optional[List[str]] = None) -> str:
+    def modify_task(self, task_msg: str) -> bool:
         """
-        Add a new task to the project.
-
+        Update the task description or title.
+        
         Args:
-            task_description: Description of the task
-            tags: Optional list of tags to associate with the task
-
+            task_msg: New description or title for the task
+            
         Returns:
-            Task ID of the newly created task
+            bool: True if the operation was successful, False otherwise
         """
         pass
-
+    
     @abstractmethod
-    def delete_task(self, task_id: str) -> bool:
+    def tags(self, new_tags: Optional[List[str]] = None) -> List[str]:
         """
-        Delete a task from the project.
-
+        Get or replace the list of tags associated with this task.
+        
         Args:
-            task_id: ID of the task to delete
-
+            new_tags: Optional new list of tags to associate with the task.
+                      If provided, replaces the existing tags.
+            
         Returns:
-            True if the task was deleted, False otherwise
+            List[str]: Current list of tags (after any updates)
         """
         pass
 
-    @abstractmethod
-    def modify_task(self, task_id: str, new_description: str) -> bool:
-        """
-        Modify the description of a task.
 
+class InlineTask(Task):
+    """
+    Implementation of a task that is represented as a single line in a markdown file.
+    
+    These tasks are typically part of a FileTask and don't have their own file.
+    """
+    
+    @abstractmethod
+    def convert_task(self) -> 'FileTask':
+        """
+        Convert this inline task to a file task.
+        
+        Returns:
+            FileTask: The newly created file task
+        """
+        pass
+
+
+class FileTask(Task):
+    """
+    Implementation of a task that is represented as a markdown file.
+    
+    These tasks can contain inline tasks and other file tasks as subtasks.
+    """
+    
+    @abstractmethod
+    def __init__(self, file_service: FileService, task_id: str, context: str) -> None:
+        """
+        Initialize a FileTask instance.
+        
         Args:
-            task_id: ID of the task to modify
-            new_description: New description for the task
-
-        Returns:
-            True if the task was modified, False otherwise
+            file_service: The file service to use for storage operations
+            task_id: The ID of the task
+            context: The markdown content of the task
         """
         pass
-
+    
     @abstractmethod
-    def mark_as_completed(self, task_id: str, completed: bool = True) -> bool:
+    def new_task(self, task_msg: str, task_prefix: Optional[str] = None) -> InlineTask:
         """
-        Mark a task as completed or not completed.
-
+        Create a new inline task as a subtask of this file task.
+        
         Args:
-            task_id: ID of the task to mark
-            completed: True to mark as completed, False to mark as not completed
-
+            task_msg: Description of the task
+            task_prefix: Optional prefix for the task ID
+            
         Returns:
-            True if the task status was updated, False otherwise
+            InlineTask: The newly created inline task
         """
         pass
-
+    
     @abstractmethod
-    def add_tag_to_task(self, task_id: str, tag: str) -> bool:
+    def tasks(self) -> List[Task]:
         """
-        Add a tag to a task.
-
+        Get all subtasks of this file task.
+        
+        Returns:
+            List[Task]: List of subtasks (can be InlineTask or FileTask)
+        """
+        pass
+    
+    @abstractmethod
+    def delete(self, task_id: Optional[str] = None, force: bool = False) -> bool:
+        """
+        Delete this task or a subtask.
+        
         Args:
-            task_id: ID of the task to tag
-            tag: Tag to add to the task
-
+            task_id: ID of the subtask to delete, or None to delete this task
+            force: If True, force deletion even if there are dependencies
+            
         Returns:
-            True if the tag was added, False otherwise
+            bool: True if the operation was successful, False otherwise
         """
         pass
-
+    
     @abstractmethod
-    def remove_tag_from_task(self, task_id: str, tag: str) -> bool:
+    def mark_as_archived(self, force: bool = False) -> bool:
         """
-        Remove a tag from a task.
-
+        Mark this task as archived.
+        
         Args:
-            task_id: ID of the task
-            tag: Tag to remove from the task
-
+            force: If True, force archiving even if there are active subtasks
+            
         Returns:
-            True if the tag was removed, False otherwise
+            bool: True if the operation was successful, False otherwise
         """
         pass
-
+    
     @abstractmethod
-    def replace_task_tags(self, task_id: str, tags: List[str]) -> bool:
+    def add_related_task(self, task_id: str) -> 'FileTask':
         """
-        Replace all tags associated with a task.
-
+        Add an existing task as a related task to this task.
+        
         Args:
-            task_id: ID of the task
-            tags: New list of tags to associate with the task
-
+            task_id: ID of the task to add as related
+            
         Returns:
-            True if the tags were replaced, False otherwise
+            FileTask: The related file task
         """
         pass
-
+    
     @abstractmethod
-    def list_tasks_by_tag(self, tag: str) -> List[Dict[str, Union[str, List[str], bool]]]:
+    def convert_task(self, task_id: str) -> 'FileTask':
         """
-        List all tasks associated with a specific tag.
-
+        Convert a subtask to a file task.
+        
         Args:
-            tag: Tag to filter tasks by
-
+            task_id: ID of the subtask to convert
+            
         Returns:
-            List of task dictionaries containing id, description, tags, and completion status
+            FileTask: The newly created file task
         """
         pass
-
+    
     @abstractmethod
-    def list_tasks_by_tags(self, tags: List[str]) -> List[Dict[str, Union[str, List[str], bool]]]:
+    def modify_task(self, task_id: Optional[str] = None, task_msg: Optional[str] = None) -> bool:
         """
-        List all tasks associated with any of the specified tags (OR relationship).
-
+        Update this task or a subtask.
+        
         Args:
-            tags: List of tags to filter tasks by
-
+            task_id: ID of the subtask to update, or None to update this task
+            task_msg: New description or title
+            
         Returns:
-            List of task dictionaries containing id, description, tags, and completion status
+            bool: True if the operation was successful, False otherwise
         """
         pass
-
+    
     @abstractmethod
-    def create_tag_collection(self, collection_name: str, tags: List[str]) -> bool:
+    def tag_groups(self) -> Dict[str, Dict[str, Any]]:
         """
-        Create a named collection of tags that can be referenced together.
-
-        Args:
-            collection_name: Name for the tag collection
-            tags: List of tags to include in the collection
-
+        Get the tag groups defined in this task.
+        
         Returns:
-            True if the collection was created, False otherwise
-        """
-        pass
-
-    @abstractmethod
-    def list_tasks_by_tag_collection(self, collection_name: str) -> List[Dict[str, Union[str, List[str], bool]]]:
-        """
-        List all tasks associated with any tag in the specified collection.
-
-        Args:
-            collection_name: Name of the tag collection to use for filtering
-
-        Returns:
-            List of task dictionaries containing id, description, tags, and completion status
-        """
-        pass
-
-    @abstractmethod
-    def get_all_tasks(self) -> List[Dict[str, Union[str, List[str], bool]]]:
-        """
-        Get all tasks in the project.
-
-        Returns:
-            List of task dictionaries containing id, description, tags, and completion status
-        """
-        pass
-
-    @abstractmethod
-    def get_task(self, task_id: str) -> Optional[Dict[str, Union[str, List[str], bool]]]:
-        """
-        Get a specific task by ID.
-
-        Args:
-            task_id: ID of the task to retrieve
-
-        Returns:
-            Task dictionary containing id, description, tags, and completion status,
-            or None if the task does not exist
-        """
-        pass
-
-    @abstractmethod
-    def flush(self) -> bool:
-        """
-        Save the current state of the project to its file.
-
-        Returns:
-            True if the project was saved successfully, False otherwise
+            Dict[str, Dict[str, Any]]: Dictionary of tag groups, where each value is a dictionary
+                with 'ordered' (bool) and 'items' (List[str]) keys
         """
         pass

@@ -8,7 +8,7 @@ from typing import List
 from .edit_session import EditSession, EditOperation
 from .file_service import FileService
 from .project_service import ProjectService
-from .task_service import TaskService
+from .task_service import FileTask
 from .markdown_service import MarkdownService
 
 __all__: List[str] = [
@@ -16,7 +16,7 @@ __all__: List[str] = [
     'EditOperation',
     'FileService',
     'ProjectService',
-    'TaskService',
+    'FileTask',
     'MarkdownService',
     'markdown_service',
 ]

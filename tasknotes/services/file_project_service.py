@@ -12,11 +12,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Union
 
-from tasknotes.interface import FileService, ProjectService, TaskService
+from tasknotes.interface import FileService, ProjectService, FileTask
 from tasknotes.interface.markdown_service import DocumentMeta
 from tasknotes.core.config import config
 from tasknotes.core.project_meta import ProjectMeta
-from .markdown_task_service import MarkdownTaskService
+# from .markdown_task_service import MarkdownTaskService
 from .numbering_service import TaskNumberingService
 
 # 项目模板 - 用于创建新项目
@@ -395,26 +395,16 @@ class FileProjectService(ProjectService):
         
         return projects
     
-    def get_task_service(self, project_id: str) -> Optional[TaskService]:
+    def get_task(self, project_id: str) -> Optional[FileTask]:
         """Get a task service for a project.
         
         Args:
             project_id: ID of the project
             
         Returns:
-            TaskService or None: A task service for the project, or None if not found
+            FileTask or None: A task service for the project, or None if not found
         """
-        # Check if the project exists
-        project_meta = self._load_project_metadata(project_id)
-        if project_meta is None:
-            # Check if it's an archived project
-            if self._load_project_metadata(project_id, archived=True) is not None:
-                raise ValueError(f"Project {project_id} is archived")
-            return None
-        
-        # Create a task service for the project
-        tasks_path = self._get_project_tasks_path(project_id)
-        return MarkdownTaskService(self.file_service, tasks_path)
+        raise NotImplementedError
     
     def add_tag(self, project_id: str, tag: str) -> bool:
         """Add a tag to a project.
