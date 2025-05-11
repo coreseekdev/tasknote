@@ -2,7 +2,7 @@
 
 import os
 import subprocess
-from typing import List, Optional, Tuple, Dict, Any, Literal
+from typing import List, Optional, Tuple, Dict, Any, Literal, Union
 from pathlib import Path
 import pygit2
 from pygit2.repository import RepositoryOpenFlag
@@ -14,7 +14,7 @@ from .config import config
 from tasknotes.interface.file_service import FileService
 
 
-def setup_git_alias() -> bool:
+def setup_git_alias() -> Tuple[bool, str]:
     """Set up the 'git task' alias."""
     try:
         # Check if the alias already exists
@@ -28,16 +28,18 @@ def setup_git_alias() -> bool:
         
         if result.returncode == 0 and result.stdout.strip():
             # Alias already exists
-            return True
+            return True, ""
             
         # Set up the alias
         subprocess.run(
             ["git", "config", "--global", "alias.task", "!tasknotes"],
             check=True
         )
-        return True
-    except subprocess.CalledProcessError:
-        return False
+        return True, ""
+    except subprocess.CalledProcessError as e:
+        return False, f"Error setting up git alias: {str(e)}"
+    except Exception as e:
+        return False, f"Unexpected error: {str(e)}"
 
 
 class TaskNoteEnv:
@@ -71,30 +73,38 @@ class TaskNoteEnv:
         """
         return self._repo is not None
     
+    def has_tasknote_branch(self) -> bool:
+        """Check if the repository has a tasknote branch.
+        
+        Returns:
+            bool: True if the repository has a tasknote branch, False otherwise
+        """
+        if not self.is_git_repo():
+            return False
+            
+        branch_name = config.get("git.branch_name")
+        try:
+            # Check if the branch exists
+            self._repo.lookup_branch(branch_name)
+            return True
+        except (pygit2.GitError, KeyError):
+            return False
+    
     def is_tasknote_init(self) -> bool:
         """Check if TaskNotes has been initialized in the repository.
         
-        TaskNotes is considered initialized if either:
-        1. The .tasknote directory exists in the repository root
-        2. A specific TaskNotes branch exists
-        
         Returns:
-            bool: True if TaskNotes is initialized, False otherwise
+            bool: True if TaskNotes has been initialized, False otherwise
         """
-        # 不需要额外检查 is_git_repo ， 因为支持 本地目录的方式
-
-        # Check if .tasknote directory exists
+        # Check for LOCAL mode - .tasknote directory
         tasknote_dir = self.repo_path / config.get("local.task_dir")
         if tasknote_dir.exists() and tasknote_dir.is_dir():
             return True
         
-        # Check for TaskNotes branch if we have a valid repository
-        if self._repo is not None:
-            # Look for a branch with 'tasknote' in the name
-            for branch in self._repo.branches:
-                if config.get("git.branch_name") in branch.lower():
-                    return True
-                    
+        # Check for GIT mode - tasknote branch
+        if self.has_tasknote_branch():
+            return True
+        
         return False
     
     def _get_user_signature(self) -> pygit2.Signature:
@@ -154,7 +164,7 @@ class TaskNoteEnv:
             
         return find_file_service(self.repo_path, self)
     
-    def tasknote_init(self, mode: Literal["LOCAL", "GIT"] = "LOCAL") -> bool:
+    def tasknote_init(self, mode: Literal["LOCAL", "GIT"] = "LOCAL") -> Tuple[bool, str]:
         """Initialize TaskNotes in the repository.
         
         Args:
@@ -163,15 +173,17 @@ class TaskNoteEnv:
                  GIT: Creates an empty tasknote branch in the git repository
         
         Returns:
-            bool: True if initialization was successful, False otherwise
+            Tuple[bool, str]: A tuple containing:
+                - bool: True if initialization was successful, False otherwise
+                - str: Empty string on success, error message on failure
         
         Note:
-            If TaskNotes is already initialized, this method will return True
+            If TaskNotes is already initialized, this method will return (True, "")
             without performing any action, regardless of the mode.
         """
         # Check if already initialized
         if self.is_tasknote_init():
-            return True
+            return True, ""
         
         # Initialize based on mode
         if mode == "LOCAL":
@@ -179,14 +191,14 @@ class TaskNoteEnv:
             tasknote_dir = self.repo_path / config.get("local.task_dir")
             try:
                 tasknote_dir.mkdir(exist_ok=True)
-                return True
+                return True, ""
             except Exception as e:
-                print(f"Error creating TaskNotes directory: {str(e)}")
-                return False
+                error_msg = f"Error creating TaskNotes directory: {str(e)}"
+                return False, error_msg
         elif mode == "GIT":
             # Check if this is a git repository
             if not self.is_git_repo():
-                return False
+                return False, "Not a Git repository"
             
             try:
                 # Get user signature
@@ -218,13 +230,13 @@ class TaskNoteEnv:
                     parent_commits
                 )
                 
-                return True
+                return True, ""
             except Exception as e:
-                print(f"Error initializing TaskNotes in GIT mode: {str(e)}")
-                return False
+                error_msg = f"Error initializing TaskNotes in GIT mode: {str(e)}"
+                return False, error_msg
         else:
             # Invalid mode
-            raise ValueError(f"Invalid mode: {mode}. Must be 'LOCAL' or 'GIT'.")
+            return False, f"Invalid mode: {mode}. Must be 'LOCAL' or 'GIT'."
 
 def find_file_service(path: str, env: Optional[TaskNoteEnv] = None) -> Optional[FileService]:
     """Create a FileService instance based on the path and environment.

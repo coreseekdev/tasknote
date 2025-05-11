@@ -7,34 +7,23 @@ import json
 # Set debug mode for testing
 os.environ["TASKNOTE_CLI_DEBUG"] = "1"
 
+import sys
+import shlex
+
 # Import the main function
 from tasknotes.cli.main import main
 
 def test_command(command_line):
-    """Test a command by setting sys.argv and calling main()."""
+    """Test a command by setting sys.argv and calling main().
+    
+    Args:
+        command_line: A command line string to parse and execute
+    """
     print(f"\nTesting command: {command_line}")
-    # Handle arguments with spaces more carefully
-    args = []
-    in_quotes = False
-    current_arg = ""
-    quote_char = None
     
-    for char in command_line:
-        if char in ['"', "'"] and (not in_quotes or quote_char == char):
-            in_quotes = not in_quotes
-            if in_quotes:
-                quote_char = char
-            else:
-                quote_char = None
-        elif char.isspace() and not in_quotes:
-            if current_arg:
-                args.append(current_arg)
-                current_arg = ""
-        else:
-            current_arg += char
-    
-    if current_arg:
-        args.append(current_arg)
+    # Use shlex.split to handle shell-like argument parsing
+    # This correctly handles quotes, escapes, etc.
+    args = shlex.split(command_line)
     
     sys.argv = ["tasknote"] + args
     main()

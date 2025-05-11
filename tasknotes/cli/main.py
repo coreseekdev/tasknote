@@ -4,16 +4,123 @@ import argparse
 import json
 import os
 import sys
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
+
+# Check if Rich should be disabled via environment variable
+RICH_DISABLED = os.environ.get("TASKNOTE_NO_RICH", "").lower() in ("1", "true", "yes")
+
+# Try to import Rich for enhanced output, but make it optional
+if not RICH_DISABLED:
+    try:
+        from rich.console import Console
+        from rich.table import Table
+        from rich.panel import Panel
+        from rich.text import Text
+        RICH_AVAILABLE = True
+    except ImportError:
+        RICH_AVAILABLE = False
+else:
+    RICH_AVAILABLE = False
 
 from tasknotes.cli.i18n import _
 from tasknotes.cmds.base_cmd import BaseCmd
 from tasknotes.cmds.cmd_service import CmdService
-from tasknotes.cmds.cmd_factory import cmd_factory
+from tasknotes.cmds.cmd_factory import cmd_factory, register_all_commands
 from tasknotes.core.task_env import TaskNoteEnv, find_file_service
 
-# Import command implementations
-from tasknotes.cmds.cmd_init import InitCmd
+# Create a console for output (rich if available, otherwise standard)
+if RICH_AVAILABLE:
+    console = Console()
+else:
+    # Create a simple console wrapper with similar interface
+    class SimpleConsole:
+        def print(self, *args, file=None, **kwargs):
+            # Strip any rich formatting markers
+            text = str(args[0])
+            # Simple regex to remove rich formatting tags like [green] or [bold red]
+            import re
+            text = re.sub(r'\[([^\]]+)\]', '', text)
+            print(text, file=file)
+    
+    console = SimpleConsole()
+
+# Dictionary to store command-specific formatters
+formatters = {}
+
+
+def register_formatter(command: str, formatter_func: Callable):
+    """Register a formatter function for a specific command.
+    
+    Args:
+        command: The command name
+        formatter_func: The formatter function that takes a CmdResult and formats it
+    """
+    formatters[command] = formatter_func
+
+
+def format_and_display_result(result):
+    """Format and display the command result based on its type.
+    
+    This function dispatches to command-specific formatters if available,
+    otherwise falls back to a default formatter.
+    
+    Args:
+        result: The CmdResult object to format and display
+    """
+    if not result.success:
+        # For failed commands, display an error message
+        if RICH_AVAILABLE:
+            error_text = Text(f"Error: {result.message}", style="bold red")
+            console.print(error_text, file=sys.stderr)
+        else:
+            print(f"Error: {result.message}", file=sys.stderr)
+        return
+    
+    # Get the command name
+    command = result.command
+    
+    # Dispatch to command-specific formatter if available
+    if command in formatters:
+        formatters[command](result, console, RICH_AVAILABLE)
+    else:
+        # Default formatter for commands without a specific formatter
+        default_formatter(result, console, RICH_AVAILABLE)
+
+
+def default_formatter(result, console, rich_available):
+    """Default formatter for command results.
+    
+    Args:
+        result: The CmdResult object to format
+        console: The console to print to
+        rich_available: Whether Rich is available for enhanced output
+    """
+    if rich_available:
+        console.print(f"[green]{result.message}[/green]")
+        
+        # Print data as JSON if present
+        if result.data:
+            console.print(json.dumps(result.data, indent=2))
+    else:
+        # Simple output without Rich formatting
+        print(result.message)
+        
+        # Print data as JSON if present
+        if result.data:
+            print(json.dumps(result.data, indent=2))
+
+
+# Import formatters
+from tasknotes.cli.formatters import (
+    format_init_result,
+    format_list_result,
+    format_search_result
+)
+
+# Register formatters for specific commands
+register_formatter("init", format_init_result)
+register_formatter("list", format_list_result)
+register_formatter("search", format_search_result)
 
 # Import all command modules
 from tasknotes.cli.cmd_init import setup_init_parser
@@ -104,10 +211,9 @@ def setup_parsers() -> argparse.ArgumentParser:
 
 
 def register_commands() -> None:
-    """Register command implementations with the command factory."""
-    # Register command implementations
-    cmd_factory.register_cmd("init", InitCmd)
-    # TODO: Register other command implementations
+    """Register command implementations."""
+    # Use the register_all_commands function to register all available commands
+    register_all_commands()
 
 
 def main() -> None:
@@ -147,10 +253,13 @@ def main() -> None:
         # Execute the command
         results = cmd_service.execute_all()
         
-        # Check if any command failed
+        # Format and display the results
         for result in results:
+            # Format output based on command type
+            format_and_display_result(result)
+            
+            # Exit with error code if command failed
             if not result.success:
-                print(f"Error: {result.message}", file=sys.stderr)
                 sys.exit(result.exit_code or 1)
 
 if __name__ == "__main__":

@@ -68,6 +68,9 @@ class CmdService:
     def execute_all(self) -> List[CmdResult]:
         """Execute all commands in the queue.
         
+        If any command fails (returns a result with success=False),
+        execution stops and remaining commands are not executed.
+        
         Returns:
             List[CmdResult]: The results of all executed commands
         """
@@ -79,6 +82,13 @@ class CmdService:
             self.executed_cmds.append(cmd)
             self.results.append(result)
             results.append(result)
+            
+            # Stop execution if a command fails
+            if not result.success:
+                # Clear the remaining commands from the queue
+                # to avoid partial execution later
+                self.cmd_queue.clear()
+                break
         
         return results
     

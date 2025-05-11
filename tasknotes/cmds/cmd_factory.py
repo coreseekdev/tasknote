@@ -5,6 +5,7 @@ import sys
 from typing import Any, Dict, List, Optional, TextIO, Type
 
 from tasknotes.cmds.base_cmd import BaseCmd, create_string_input
+from tasknotes.cmds.cmd_init import InitCmd
 
 
 class CommandFactory:
@@ -92,3 +93,97 @@ class CommandFactory:
 
 # Create a singleton instance
 cmd_factory = CommandFactory()
+
+# Import and register all command implementations
+def register_all_commands():
+    """Register all command implementations."""
+    from tasknotes.cmds.cmd_init import InitCmd
+    cmd_factory.register_cmd("init", InitCmd)
+    
+    # Import and register other commands as they are implemented
+    try:
+        from tasknotes.cmds.cmd_add import AddCmd
+        cmd_factory.register_cmd("add", AddCmd)
+    except ImportError:
+        pass
+    
+    try:
+        from tasknotes.cmds.cmd_note import NoteCmd
+        cmd_factory.register_cmd("note", NoteCmd)
+    except ImportError:
+        pass
+    
+    try:
+        from tasknotes.cmds.cmd_edit import EditCmd
+        cmd_factory.register_cmd("edit", EditCmd)
+    except ImportError:
+        pass
+    
+    try:
+        from tasknotes.cmds.cmd_list import ListCmd
+        cmd_factory.register_cmd("list", ListCmd)
+    except ImportError:
+        pass
+    
+    try:
+        from tasknotes.cmds.cmd_archive import ArchiveCmd
+        cmd_factory.register_cmd("archive", ArchiveCmd)
+    except ImportError:
+        pass
+    
+    try:
+        from tasknotes.cmds.cmd_remove import RemoveCmd
+        cmd_factory.register_cmd("remove", RemoveCmd)
+    except ImportError:
+        pass
+    
+    try:
+        from tasknotes.cmds.cmd_open import OpenCmd
+        cmd_factory.register_cmd("open", OpenCmd)
+    except ImportError:
+        pass
+    
+    try:
+        from tasknotes.cmds.cmd_active import ActiveCmd
+        cmd_factory.register_cmd("active", ActiveCmd)
+    except ImportError:
+        pass
+    
+    try:
+        from tasknotes.cmds.cmd_close import CloseCmd
+        cmd_factory.register_cmd("close", CloseCmd)
+    except ImportError:
+        pass
+    
+    try:
+        from tasknotes.cmds.cmd_done import DoneCmd
+        cmd_factory.register_cmd("done", DoneCmd)
+    except ImportError:
+        pass
+    
+    try:
+        from tasknotes.cmds.cmd_tag import TagCmd
+        cmd_factory.register_cmd("tag", TagCmd)
+    except ImportError:
+        pass
+    
+    try:
+        from tasknotes.cmds.cmd_search import SearchCmd
+        cmd_factory.register_cmd("search", SearchCmd)
+    except ImportError:
+        pass
+    
+    try:
+        from tasknotes.cmds.cmd_help import HelpCmd
+        cmd_factory.register_cmd("help", HelpCmd)
+    except ImportError:
+        pass
+    
+    try:
+        from tasknotes.cmds.cmd_mcp import McpCmd
+        cmd_factory.register_cmd("mcp", McpCmd)
+    except ImportError:
+        pass
+
+# Register the init command by default
+cmd_factory.register_cmd("init", InitCmd)

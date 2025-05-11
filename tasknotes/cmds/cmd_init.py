@@ -10,7 +10,7 @@ from tasknotes.core.task_env import TaskNoteEnv
 class InitCmd(BaseCmd):
     """Command to initialize a TaskNote repository."""
     
-    def execute(self, cmd_service: 'CmdService', task_env: TaskNoteEnv) -> CmdResult:
+    def _execute_impl(self, cmd_service: 'CmdService', task_env: TaskNoteEnv) -> CmdResult:
         """Execute the init command.
         
         Args:
@@ -24,42 +24,43 @@ class InitCmd(BaseCmd):
         use_git = self.args.get("git", False)
         mode = "GIT" if use_git else "LOCAL"
         
-        # Check if already initialized
+        # First explicitly check if already initialized
+        # This provides a clearer semantic distinction between already initialized and new initialization
         if task_env.is_tasknote_init():
+            # Get the current mode (GIT or LOCAL) for better reporting
+            current_mode = "GIT" if task_env.is_git_repo() and task_env.has_tasknote_branch() else "LOCAL"
             return CmdResult(
                 success=True,
-                message=f"TaskNote repository already initialized",
+                message=f"TaskNote repository already initialized in {current_mode} mode",
                 data={
-                    "git": use_git,
-                    "already_initialized": True
+                    "git": current_mode == "GIT",
+                    "mode": current_mode,
+                    "already_initialized": True,
+                    "path": str(task_env.repo_path)
                 }
             )
         
-        # Initialize the repository
-        try:
-            success = task_env.tasknote_init(mode=mode)
-            
-            if success:
-                return CmdResult(
-                    success=True,
-                    message=f"Initialized TaskNote repository with {'git' if use_git else 'local'} backend",
-                    data={
-                        "git": use_git,
-                        "mode": mode,
-                        "path": str(task_env.repo_path)
-                    }
-                )
-            else:
-                return CmdResult(
-                    success=False,
-                    message=f"Failed to initialize TaskNote repository with {'git' if use_git else 'local'} backend",
-                    data={"git": use_git},
-                    exit_code=1
-                )
-        except Exception as e:
+        # Initialize the repository only if not already initialized
+        success, error_msg = task_env.tasknote_init(mode=mode)
+        
+        if success:
+            return CmdResult(
+                success=True,
+                message=f"Initialized TaskNote repository with {'git' if use_git else 'local'} backend",
+                data={
+                    "git": use_git,
+                    "mode": mode,
+                    "path": str(task_env.repo_path)
+                }
+            )
+        else:
+            # Use the error message returned from tasknote_init
             return CmdResult(
                 success=False,
-                message=f"Error initializing TaskNote repository: {str(e)}",
-                data={"git": use_git, "error": str(e)},
+                message=f"Failed to initialize TaskNote repository: {error_msg}",
+                data={
+                    "git": use_git,
+                    "error": error_msg
+                },
                 exit_code=1
             )

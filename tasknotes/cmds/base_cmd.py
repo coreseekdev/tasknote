@@ -14,12 +14,42 @@ if TYPE_CHECKING:
 
 @dataclass
 class CmdResult:
-    """Result of a command execution."""
+    """Result of a command execution.
+    
+    This class contains the result of executing a command, including whether it was
+    successful, any message to display to the user, and structured data for further
+    processing or formatting.
+    """
     
     success: bool = True
     message: str = ""
     data: Dict[str, Any] = field(default_factory=dict)
     exit_code: int = 0
+    command: str = ""
+    command_args: Dict[str, Any] = field(default_factory=dict)
+    
+    def to_json(self) -> Dict[str, Any]:
+        """Convert the result to a JSON-serializable dictionary.
+        
+        Returns:
+            Dict[str, Any]: A JSON-serializable representation of the result
+        """
+        return {
+            "success": self.success,
+            "message": self.message,
+            "data": self.data,
+            "exit_code": self.exit_code,
+            "command": self.command,
+            "command_args": self.command_args
+        }
+    
+    def __str__(self) -> str:
+        """String representation of the command result.
+        
+        Returns:
+            str: A string representation of the command result
+        """
+        return json.dumps(self.to_json(), indent=2)
 
 
 class BaseCmd(abc.ABC):
@@ -49,8 +79,10 @@ class BaseCmd(abc.ABC):
         self.stderr = stderr or sys.stderr
     
     @abc.abstractmethod
-    def execute(self, cmd_service: 'CmdService', task_env: 'TaskNoteEnv') -> CmdResult:
-        """Execute the command.
+    def _execute_impl(self, cmd_service: 'CmdService', task_env: 'TaskNoteEnv') -> CmdResult:
+        """Implementation of the command execution.
+        
+        This method should be implemented by subclasses to perform the actual command execution.
         
         Args:
             cmd_service: The command service to use for executing additional commands
@@ -60,6 +92,27 @@ class BaseCmd(abc.ABC):
             CmdResult: The result of the command execution
         """
         pass
+    
+    def execute(self, cmd_service: 'CmdService', task_env: 'TaskNoteEnv') -> CmdResult:
+        """Execute the command and populate the result with command information.
+        
+        This method calls the _execute_impl method and ensures that the result
+        contains the command name and arguments.
+        
+        Args:
+            cmd_service: The command service to use for executing additional commands
+            task_env: The task environment providing access to task data and services
+            
+        Returns:
+            CmdResult: The result of the command execution with command information
+        """
+        result = self._execute_impl(cmd_service, task_env)
+        
+        # Populate command information in the result
+        result.command = self.command
+        result.command_args = self.args.copy()
+        
+        return result
     
     def to_json(self) -> Dict[str, Any]:
         """Convert the command to a JSON-serializable dictionary.
