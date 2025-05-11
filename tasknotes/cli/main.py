@@ -7,6 +7,13 @@ import sys
 from typing import Dict, Any, List, Optional
 
 from tasknotes.cli.i18n import _
+from tasknotes.cmds.base_cmd import BaseCmd
+from tasknotes.cmds.cmd_service import CmdService
+from tasknotes.cmds.cmd_factory import cmd_factory
+from tasknotes.core.task_env import TaskNoteEnv, find_file_service
+
+# Import command implementations
+from tasknotes.cmds.cmd_init import InitCmd
 
 # Import all command modules
 from tasknotes.cli.cmd_init import setup_init_parser
@@ -96,30 +103,55 @@ def setup_parsers() -> argparse.ArgumentParser:
 # The _ function is imported from i18n module
 
 
+def register_commands() -> None:
+    """Register command implementations with the command factory."""
+    # Register command implementations
+    cmd_factory.register_cmd("init", InitCmd)
+    # TODO: Register other command implementations
+
+
 def main() -> None:
     """Main entry point for the CLI."""
+    # Register command implementations
+    register_commands()
+    
+    # Parse command line arguments
     parser = setup_parsers()
     args = parser.parse_args()
     
-    # Convert args to dictionary for JSON output
-    args_dict = vars(args)
-    command = args_dict.pop("command", None)
+    # Get the command name
+    command = args.command
+    
+    # Create a TaskNoteEnv for the current directory
+    cwd = os.getcwd()
+    task_env = TaskNoteEnv(cwd)
+    
+    # Create a command service with the task environment
+    cmd_service = CmdService(task_env)
+    
+    # Create a command from the arguments
+    cmd = cmd_factory.create_from_args(command, args)
+    
+    if cmd is None:
+        print(f"Error: Unknown command '{command}'", file=sys.stderr)
+        sys.exit(1)
     
     if is_debug_mode():
-        # In debug mode, just print the parsed arguments
-        output = {
-            "command": command,
-            "args": args_dict
-        }
-        print(json.dumps(output, indent=2))
+        # In debug mode, just print the command and exit
+        print(json.dumps(cmd.to_json(), indent=2))
     else:
         # In normal mode, execute the command
-        try:
-            not_implemented_error()
-        except NotImplementedError as e:
-            print(f"Error: {e}", file=sys.stderr)
-            sys.exit(1)
-
+        # Add the command to the service
+        cmd_service.add_cmd(cmd)
+        
+        # Execute the command
+        results = cmd_service.execute_all()
+        
+        # Check if any command failed
+        for result in results:
+            if not result.success:
+                print(f"Error: {result.message}", file=sys.stderr)
+                sys.exit(result.exit_code or 1)
 
 if __name__ == "__main__":
     main()
