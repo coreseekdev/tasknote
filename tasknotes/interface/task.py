@@ -1,13 +1,14 @@
 """
-Task Service Interface for TaskNotes.
+Task and Project Interface for TaskNotes.
 
-This module defines the interface for managing tasks within projects.
+This module defines the interfaces for managing tasks and projects in TaskNotes.
+It provides a unified model where projects are special cases of tasks.
 """
 
 from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional, Union, Any
+from typing import Dict, List, Optional, Union, Any, Set
 
 from tasknotes.interface.file_service import FileService
 from tasknotes.interface.numbering_service import NumberingService
@@ -125,7 +126,7 @@ class FileTask(Task):
         pass
     
     @abstractmethod
-    def new_task(self, task_msg: str, task_prefix: Optional[str] = None) -> InlineTask:
+    def new_sub_task(self, task_msg: str, task_prefix: Optional[str] = None) -> InlineTask:
         """
         Create a new inline task as a subtask of this file task.
         
@@ -225,3 +226,104 @@ class FileTask(Task):
                 with 'ordered' (bool) and 'items' (List[str]) keys
         """
         pass
+
+
+class TaskService(FileTask):
+    """
+    Task service interface that manages a collection of tasks.
+    
+    TaskService is a special case of FileTask that serves as the root task
+    for a project. It provides additional methods for project management.
+    """
+    
+    @abstractmethod
+    def __init__(self, file_service: FileService, numbering_service: NumberingService) -> None:
+        """
+        Initialize a TaskService instance.
+        
+        Args:
+            file_service: The file service to use for storage operations
+            numbering_service: The numbering service to use for generating task IDs
+        """
+        pass
+
+    @abstractmethod
+    def new_task(self, task_msg: str, task_prefix: Optional[str] = None) -> Task:
+        """
+        Create a new task as a subtask of this file task.
+        
+        Args:
+            task_msg: Description of the task
+            task_prefix: Optional prefix for the task ID
+            
+        Returns:
+            Task: The newly created task
+        """
+        # 对于 TaskService，返回的是 FileTask 
+        pass
+    
+    @abstractmethod
+    def list_tasks(self, include_archived: bool = False) -> List[Dict[str, Any]]:
+        """
+        List all tasks managed by this service.
+        
+        Args:
+            include_archived: If True, include archived tasks in the list
+            
+        Returns:
+            List[Dict[str, Any]]: List of task information dictionaries containing:
+                - id: Task ID
+                - name: Task name
+                - description: Task description
+                - created_at: Creation timestamp
+                - archived_at: Archive timestamp (None if not archived)
+                - tags: List of associated tags
+        """
+        pass
+    
+    @abstractmethod
+    def get_task(self, task_id: str) -> Optional[FileTask]:
+        """
+        Get a specific task by ID.
+        
+        Args:
+            task_id: ID of the task to retrieve
+            
+        Returns:
+            Optional[FileTask]: The task, or None if not found
+            
+        Raises:
+            ValueError: If the task is archived
+        """
+        pass
+    
+    @abstractmethod
+    def archive_task(self, task_id: str) -> bool:
+        """
+        Archive a task.
+        
+        Args:
+            task_id: ID of the task to archive
+            
+        Returns:
+            bool: True if the task was archived, False if not found
+        """
+        pass
+    
+    @abstractmethod
+    def delete_archived_task(self, task_id: Optional[str] = None) -> int:
+        """
+        Delete archived tasks.
+        
+        Args:
+            task_id: Optional ID of a specific archived task to delete.
+                   If None, all archived tasks will be deleted.
+            
+        Returns:
+            int: Number of tasks deleted
+        """
+        pass
+
+
+# Alias for backward compatibility and clarity
+ProjectService = TaskService

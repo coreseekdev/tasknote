@@ -171,3 +171,18 @@ class MarkdownService(ABC):
             An iterator over HeadSection objects, each representing a header
             and its associated content section.
         """
+    
+    @abstractmethod
+    def parse(self, content: str) -> Tuple[DocumentMeta, Iterator[HeadSection]]:
+        """Parse markdown content and extract both metadata and headers.
+        
+        This is a convenience method that combines get_meta and get_headers into a single call.
+        
+        Args:
+            content: The markdown document text to parse
+            
+        Returns:
+            A tuple containing:
+            - DocumentMeta: The parsed metadata from the document
+            - Iterator[HeadSection]: An iterator over all header sections in the document
+        """

@@ -310,6 +310,119 @@ def test_nested_lists():
     assert not nav_items[1].is_completed_task
 
 
+def test_parse_method():
+    """Test the parse method that extracts both metadata and headers in a single call."""
+    service = create_markdown_service()
+    content = """---
+title: Test Document
+tags:
+  - test
+  - markdown
+priority: 1
+---
+# Top Level
+Some content
+## Second Level
+More content
+- List item 1
+- List item 2
+  - Nested item
+
+### Third Level
+Final content
+"""
+    
+    # Call the parse method
+    meta, headers_iterator = service.parse(content)
+    headers = list(headers_iterator)
+    
+    # Verify metadata
+    assert meta.data["title"] == "Test Document"
+    assert meta.data["tags"] == ["test", "markdown"]
+    assert meta.data["priority"] == 1
+    
+    # Verify headers
+    assert len(headers) == 3
+    assert headers[0].text == "Top Level"
+    assert headers[0].head_level == 1
+    assert headers[1].text == "Second Level"
+    assert headers[1].head_level == 2
+    assert headers[2].text == "Third Level"
+    assert headers[2].head_level == 3
+    
+    # Verify lists under second header
+    second_header = headers[1]
+    lists = list(second_header.get_lists())
+    assert len(lists) == 1
+    
+    list_items = list(lists[0].list_items())
+    assert len(list_items) == 2
+    assert list_items[0].text == "List item 1"
+    assert list_items[1].text == "List item 2"
+    
+    # Verify nested list
+    nested_lists = list(list_items[1].get_lists())
+    assert len(nested_lists) == 1
+    nested_items = list(nested_lists[0].list_items())
+    assert len(nested_items) == 1
+    assert nested_items[0].text == "Nested item"
+
+
+def test_parse_without_frontmatter():
+    """Test the parse method with a document that has no frontmatter."""
+    service = create_markdown_service()
+    content = """# Just a header
+Some content without frontmatter
+
+## Second header
+- List item
+"""
+    
+    # Call the parse method
+    meta, headers_iterator = service.parse(content)
+    headers = list(headers_iterator)
+    
+    # Verify empty metadata
+    assert meta.data == {}
+    start, end = meta.text_range
+    assert start == 0
+    assert end == 0
+    
+    # Verify headers
+    assert len(headers) == 2
+    assert headers[0].text == "Just a header"
+    assert headers[0].head_level == 1
+    assert headers[1].text == "Second header"
+    assert headers[1].head_level == 2
+    
+    # Verify list under second header
+    second_header = headers[1]
+    lists = list(second_header.get_lists())
+    assert len(lists) == 1
+    list_items = list(lists[0].list_items())
+    assert len(list_items) == 1
+    assert list_items[0].text == "List item"
+
+
+def test_parse_empty_document():
+    """Test the parse method with an empty document."""
+    service = create_markdown_service()
+    content = ""
+    
+    # Call the parse method
+    meta, headers_iterator = service.parse(content)
+    headers = list(headers_iterator)
+    
+    # Verify empty metadata
+    assert meta.data == {}
+    start, end = meta.text_range
+    assert start == 0
+    assert end == 0
+    
+    # Verify no headers
+    assert len(headers) == 0
+
+
 def test_document_meta_set_and_apply():
     """Test the set and apply methods of DocumentMeta."""
     service = create_markdown_service()

@@ -357,6 +357,60 @@ class TreeSitterMarkdownService(MarkdownService):
         
         yield from find_headers(tree.root_node)
     
+    def parse(self, content: str) -> Tuple[DocumentMeta, Iterator[HeadSection]]:
+        """Parse markdown content and extract both metadata and headers.
+        
+        This method efficiently extracts both metadata and headers in a single parse operation,
+        avoiding the need to parse the markdown content twice.
+        
+        Args:
+            content: The markdown document text to parse
+            
+        Returns:
+            A tuple containing:
+            - DocumentMeta: The parsed metadata from the document
+            - Iterator[HeadSection]: An iterator over all header sections in the document
+        """
+        # Parse the content once
+        tree = self.parser.parse(bytes(content, 'utf8'))
+        root_node = tree.root_node
+        
+        # Extract metadata
+        meta = TreeSitterDocumentMeta(_data={}, _start_pos=0, _end_pos=0)
+        for child in root_node.children:
+            if child.type == 'minus_metadata':
+                yaml_text = content[child.start_byte:child.end_byte]
+                start_pos = child.start_byte
+                end_pos = child.end_byte
+                
+                try:
+                    # PyYAML can handle documents with --- markers directly
+                    for doc in yaml.safe_load_all(yaml_text):
+                        if doc and isinstance(doc, dict):
+                            meta = TreeSitterDocumentMeta(
+                                _data=doc,
+                                _start_pos=start_pos,
+                                _end_pos=end_pos
+                            )
+                            break
+                except yaml.YAMLError:
+                    pass
+        
+        # Extract headers
+        def find_headers(node):
+            if node.type == 'atx_heading':
+                header = self._process_header_node(node, content)
+                if header:
+                    yield header
+            
+            # Continue with children
+            for child in node.children:
+                yield from find_headers(child)
+        
+        headers = find_headers(root_node)
+        
+        return meta, headers
+    
     def _process_header_node(self, node, content: str) -> Optional[TreeSitterHeadSection]:
         """Process a header node and extract its text and level.
         
