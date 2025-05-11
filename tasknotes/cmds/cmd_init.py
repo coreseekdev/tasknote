@@ -3,7 +3,7 @@
 import os
 from typing import Any, Dict
 
-from tasknotes.cmds.base_cmd import BaseCmd, CmdResult
+from tasknotes.core.base_cmd import BaseCmd, CmdResult
 from tasknotes.core.task_env import TaskNoteEnv
 
 

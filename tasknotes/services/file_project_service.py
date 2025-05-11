@@ -26,9 +26,13 @@ PROJECT_TEMPLATE = """# {name}
 
 ## Tasks
 
-## Milestones 
+## Notes
 
-## Kanban
+## Tags
+
+### Milestones 
+
+### Kanban
 
 1. TODO
 2. DOING

@@ -4,7 +4,7 @@ import argparse
 import sys
 from typing import Any, Dict, List, Optional, TextIO, Type
 
-from tasknotes.cmds.base_cmd import BaseCmd, create_string_input
+from tasknotes.core.base_cmd import BaseCmd, create_string_input
 from tasknotes.cmds.cmd_init import InitCmd
 
 

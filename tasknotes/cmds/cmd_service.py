@@ -9,7 +9,7 @@ from typing import Any, Deque, Dict, List, Optional, Type, Union, TYPE_CHECKING
 if TYPE_CHECKING:
     from tasknotes.core.task_env import TaskNoteEnv
 
-from tasknotes.cmds.base_cmd import BaseCmd, CmdResult
+from tasknotes.core.base_cmd import BaseCmd, CmdResult
 
 
 class CmdService:

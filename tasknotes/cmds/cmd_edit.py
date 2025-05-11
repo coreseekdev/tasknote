@@ -4,7 +4,7 @@ import os
 import subprocess
 from typing import Any, Dict, List, Optional
 
-from tasknotes.cmds.base_cmd import BaseCmd, CmdResult
+from tasknotes.core.base_cmd import BaseCmd, CmdResult
 from tasknotes.core.task_env import TaskNoteEnv
 
 
