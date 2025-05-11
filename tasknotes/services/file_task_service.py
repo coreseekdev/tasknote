@@ -12,8 +12,12 @@ from typing import Dict, List, Optional, Set, Tuple, Union, Any
 from tasknotes.interface.file_service import FileService
 from tasknotes.interface.numbering_service import NumberingService
 from tasknotes.interface.task import Task, InlineTask, FileTask, TaskService
+from tasknotes.interface.markdown_service import MarkdownService, HeadSection, ListBlock, DocumentMeta
+from tasknotes.interface.edit_session import EditSession, EditOperation
 from tasknotes.core.config import config
 from tasknotes.services.numbering_service import TaskNumberingService
+from tasknotes.core.markdown import create_markdown_service
+from tasknotes.core.edit_session_ot import EditSessionOT
 
 # 任务模板 - 用于创建新任务
 FILE_TASK_TEMPLATE = """# {name}
@@ -46,6 +50,8 @@ class FileTaskImpl(Task):
             task_id: ID of the task
         """
         self._task_id = task_id
+        self._markdown_service = None
+        self._parse_cache = None
     
     @property
     def task_id(self) -> str:
@@ -108,41 +114,224 @@ class FileTaskImpl(FileTaskImpl, FileTask):
         super().__init__(task_id)
         self.file_service = file_service
         self.numbering_service = numbering_service
-        self.context = context
+        self._context = context
+        self._context_updated_count = 0
+        self._parse_cache = None
     
-    def new_sub_rtask(self, task_msg: str, task_prefix: Optional[str] = None) -> InlineTask:
+    @property
+    def context(self) -> str:
+        """Get the markdown content of the task.
+        
+        Returns:
+            str: The markdown content
+        """
+        return self._context
+    
+    @context.setter
+    def context(self, value: str) -> None:
+        """Set the markdown content of the task.
+        
+        Only updates if the content has changed, and invalidates the parse cache if needed.
+        
+        Args:
+            value: The new markdown content
+        """
+        if self._context != value:
+            self._context = value
+            self._context_updated_count += 1
+            self._parse_cache = None  # 内容变化时清除缓存
+    
+    def get_markdown_service(self) -> MarkdownService:
+        """Get or create a markdown service instance.
+        
+        Returns:
+            MarkdownService: An instance of the markdown service
+        """
+
+        # 有必要为每个 FileTask 都构造一个 markdown_service， 因为其本质为 parser 。
+        # 基于 tree-sitter 增量的本质决定了，不能复用 parser.
+        if self._markdown_service is None:
+            self._markdown_service = create_markdown_service()
+        return self._markdown_service
+    
+    def parse_markdown(self) -> Tuple[DocumentMeta, Iterator[HeadSection]]:
+        """Parse current context with caching.
+        
+        Returns:
+            Tuple: The parsed metadata and headers
+        """
+        # 使用当前上下文，并利用缓存
+        if self._parse_cache is None:
+            # 解析并缓存结果
+            markdown_service = self.get_markdown_service()
+            self._parse_cache = markdown_service.parse(self._context)
+        
+        return self._parse_cache
+    
+    def get_meta(self) -> DocumentMeta:
+        """Get metadata from current context.
+        
+        Returns:
+            DocumentMeta: The parsed metadata
+        """
+        meta, _ = self.parse_markdown()
+        return meta
+    
+    def get_headers(self) -> Iterator[HeadSection]:
+        """Get headers from current context.
+        
+        Returns:
+            Iterator[HeadSection]: The parsed headers
+        """
+        _, headers = self.parse_markdown()
+        return headers
+        
+    def get_edit_session(self) -> EditSession:
+        """Get or create an edit session for this task.
+        
+        Returns:
+            EditSession: An edit session for modifying the task content
+        """
+        if not hasattr(self, '_edit_session') or self._edit_session is None:
+            self._edit_session = EditSessionOT(self._context)
+        return self._edit_session
+        
+    def _find_or_create_task_list(self, head_section: HeadSection) -> Tuple[bool, ListBlock]:
+        """Find an existing task list or create a new one under the given header section.
+        
+        Args:
+            head_section: The header section to search in
+            
+        Returns:
+            Tuple[bool, ListBlock]: A tuple containing:
+                - bool: True if a list was found, False if a new one was created
+                - ListBlock: The found or created list block
+        """
+        # 检查是否已有任务列表
+        lists = list(head_section.get_lists())
+        if lists:
+            # 返回第一个列表（通常只有一个）
+            return True, lists[0]
+        
+        # 没有找到列表，需要创建一个新的（这部分会在调用方处理）
+        return False, None
+    
+    def _append_task_to_list(self, task_id: str, task_msg: str, task_section_name: str, edit_session: EditSession) -> bool:
+        """Append a new task to the task list in the markdown content using edit session.
+        
+        Args:
+            task_id: The ID of the new task
+            task_msg: The description of the new task
+            task_section_name: The name of the task section header
+            edit_session: The edit session to use for modifications
+            
+        Returns:
+            bool: True if content was modified, False otherwise
+        """
+        # 确保任务消息只有一行
+        assert '\n' not in task_msg, "Task message must be a single line"
+        
+        # 使用当前上下文解析内容
+        headers = self.get_headers()
+        
+        # 查找任务部分
+        task_section = None
+        for header in headers:
+            if header.text == task_section_name and header.head_level == 2:  # ## Tasks
+                task_section = header
+                break
+        
+        # 准备新任务条目
+        task_entry = f"- [ ] {task_id}: {task_msg}\n"
+        
+        if task_section:
+            # 找到了任务部分，检查是否已有任务列表
+            found, _ = self._find_or_create_task_list(task_section)
+            
+            if found:
+                # 已有列表，在列表末尾添加新任务
+                section_start, section_end = task_section.text_range
+                current_content = edit_session.get_content()
+                section_content = current_content[section_start:section_end]
+                
+                # 找到最后一个列表项的位置
+                lines = section_content.split('\n')
+                last_list_line = -1
+                
+                for i, line in enumerate(lines):
+                    if line.strip().startswith('- '):
+                        last_list_line = i
+                
+                if last_list_line >= 0:
+                    # 在最后一个列表项后添加新任务
+                    # 计算插入位置
+                    insert_pos = section_start
+                    for i in range(last_list_line + 1):
+                        insert_pos = current_content.find('\n', insert_pos) + 1
+                    
+                    # 使用edit_session插入新任务
+                    edit_session.insert(insert_pos, task_entry)
+                    return True
+                else:
+                    # 没有找到列表项，在部分标题后添加新列表
+                    header_line_end = section_start + section_content.find('\n') + 1
+                    edit_session.insert(header_line_end, task_entry)
+                    return True
+            else:
+                # 没有找到列表，在部分标题后添加新列表
+                section_start, section_end = task_section.text_range
+                current_content = edit_session.get_content()
+                section_content = current_content[section_start:section_end]
+                header_line_end = section_start + section_content.find('\n') + 1
+                
+                if header_line_end > section_start:
+                    edit_session.insert(header_line_end, task_entry)
+                    return True
+        else:
+            # 没有找到任务部分，添加新部分
+            current_content = edit_session.get_content()
+            edit_session.insert(len(current_content), f"\n## {task_section_name}\n{task_entry}")
+            return True
+        
+        # 如果所有尝试都失败，返回失败
+        return False
+    
+    def new_sub_task(self, task_msg: str, task_prefix: Optional[str] = None) -> InlineTask:
         """Create a new inline task as a subtask of this file task.
         
         Args:
-            task_msg: Description of the task
+            task_msg: Description of the task (must be a single line)
             task_prefix: Optional prefix for the task ID
             
         Returns:
             InlineTask: The newly created inline task
         """
+        # 确保任务消息只有一行
+        if '\n' in task_msg:
+            task_msg = task_msg.split('\n')[0]
+        
         # 获取任务ID
         if task_prefix is None:
             task_prefix = self.numbering_service.get_default_prefix()
             
         task_id = self.numbering_service.get_next_number(task_prefix)
         
-        # 修改当前任务文件，在 # Tasks 部分添加新任务
-        task_path = os.path.join(self.file_service.base_path, f"{self.task_id}.md")
-        content = self.context
+        # 获取任务部分名称（支持国际化）
+        task_section_name = config.get("tasks.section_name", "Tasks")
         
-        # 找到 ## Tasks 部分并添加新任务
-        task_section_pattern = r"(## Tasks\s*\n)"
-        task_entry = f"- [ ] {task_id}: {task_msg.split('\n')[0] if '\n' in task_msg else task_msg}\n"
+        # 获取编辑会话
+        edit_session = self.get_edit_session()
         
-        if re.search(task_section_pattern, content):
-            updated_content = re.sub(task_section_pattern, f"\g<1>{task_entry}", content)
-        else:
-            # 如果找不到 Tasks 部分，添加一个
-            updated_content = content + f"\n## Tasks\n{task_entry}"
+        # 使用辅助函数添加任务
+        content_modified = self._append_task_to_list(task_id, task_msg, task_section_name, edit_session)
         
-        # 更新文件
-        self.file_service.write_file(task_path, updated_content)
-        self.context = updated_content
+        # 如果内容被修改，更新上下文
+        if content_modified:
+            # 获取更新后的内容
+            updated_content = edit_session.get_content()
+            
+            # 更新上下文（使用setter，会自动处理缓存）
+            self.context = updated_content
         
         # 创建并返回 InlineTask 实例
         return InlineTaskImpl(self.file_service, task_id, self)
