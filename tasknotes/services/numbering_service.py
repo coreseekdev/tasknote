@@ -8,9 +8,10 @@ import yaml
 from typing import Dict, Optional
 
 from tasknotes.interface.file_service import FileService
+from tasknotes.interface.numbering_service import NumberingService
 
 
-class TaskNumberingService:
+class TaskNumberingService(NumberingService):
     """Service for generating sequential task and project identifiers.
     
     This service maintains a YAML file that stores the current sequence numbers

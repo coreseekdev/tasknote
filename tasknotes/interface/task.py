@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union, Any
 
 from tasknotes.interface.file_service import FileService
+from tasknotes.interface.numbering_service import NumberingService
 
 class Task(ABC):
     """
@@ -111,12 +112,13 @@ class FileTask(Task):
     """
     
     @abstractmethod
-    def __init__(self, file_service: FileService, task_id: str, context: str) -> None:
+    def __init__(self, file_service: FileService, numbering_service: NumberingService, task_id: str, context: str) -> None:
         """
         Initialize a FileTask instance.
         
         Args:
             file_service: The file service to use for storage operations
+            numbering_service: The numbering service to use for generating task IDs
             task_id: The ID of the task
             context: The markdown content of the task
         """

@@ -8,7 +8,8 @@ from datetime import datetime
 from tasknotes.interface import FileService
 from tasknotes.core.project_meta import ProjectMeta
 from tasknotes.interface.markdown_service import DocumentMeta
-from tasknotes.interface.task_service import FileTask, InlineTask
+from tasknotes.interface.task import FileTask, InlineTask
+from tasknotes.interface.numbering_service import NumberingService
 from tasknotes.services.file_project_service import FileProjectService
 from tasknotes.services.numbering_service import TaskNumberingService
 
@@ -126,10 +127,43 @@ This is a test project description.
 """
 
 
+# Mock for NumberingService to avoid import errors
+class MockNumberingService(NumberingService):
+    def __init__(self):
+        self._default_prefix = "TASK"
+        self._prefixes = {"TASK": 0, "default": "TASK"}
+    
+    def get_next_number(self, prefix=None):
+        if prefix is None:
+            prefix = self._default_prefix
+        self._prefixes[prefix] = self._prefixes.get(prefix, 0) + 1
+        return f"{prefix}-{self._prefixes[prefix]:03d}"
+    
+    def set_default_prefix(self, prefix):
+        self._default_prefix = prefix
+        self._prefixes["default"] = prefix
+    
+    def get_default_prefix(self):
+        return self._default_prefix
+    
+    def get_current_number(self, prefix=None):
+        if prefix is None:
+            prefix = self._default_prefix
+        return self._prefixes.get(prefix, 0)
+    
+    def get_all_prefixes(self):
+        return {k: v for k, v in self._prefixes.items() if k != "default"}
+    
+    def reset_prefix(self, prefix, value=0):
+        if prefix in self._prefixes:
+            self._prefixes[prefix] = value
+
+
 # Mock for FileTask to avoid import errors
 class MockFileTask(FileTask):
-    def __init__(self, file_service, task_id, context=""):
+    def __init__(self, file_service, numbering_service=None, task_id="TASK-000", context=""):
         self.file_service = file_service
+        self.numbering_service = numbering_service or MockNumberingService()
         self._task_id = task_id
         self.context = context
         self.file_path = f"projects/{task_id}.md"
@@ -200,7 +234,7 @@ class MockInlineTask(InlineTask):
         return new_tags or []
     
     def convert_task(self):
-        return MockFileTask(self.file_service, self._task_id, self.description)
+        return MockFileTask(self.file_service, None, self._task_id, self.description)
 
 
 class TestFileProjectService:
@@ -512,7 +546,8 @@ Description 3
         
         # Mock the FileTask class
         with patch('tasknotes.services.file_project_service.FileTask') as mock_file_task_class:
-            mock_file_task = MockFileTask(mock_file_service, "PROJ-0001", "# Test Project\n\nDescription\n")
+            mock_numbering_service = MockNumberingService()
+            mock_file_task = MockFileTask(mock_file_service, mock_numbering_service, "PROJ-0001", "# Test Project\n\nDescription\n")
             mock_file_task_class.return_value = mock_file_task
             
             # Mock _load_project_metadata to return a ProjectMeta for PROJ-0001

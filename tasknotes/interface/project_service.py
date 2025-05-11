@@ -6,7 +6,7 @@ This module defines the interface for managing projects in TaskNotes.
 from abc import ABC, abstractmethod
 from typing import List, Optional, Set
 
-from .task_service import FileTask
+from .task import FileTask
 
 
 class ProjectService(ABC):
