@@ -25,6 +25,12 @@ class Task(ABC):
     def task_id(self) -> str:
         """Get the task ID."""
         pass
+
+    @property
+    @abstractmethod
+    def task_message(self) -> str:
+        """Get the task single line message."""
+        pass
     
     @abstractmethod
     def mark_as_done(self) -> bool:
@@ -126,7 +132,7 @@ class FileTask(Task):
         pass
     
     @abstractmethod
-    def new_sub_task(self, task_msg: str, task_prefix: Optional[str] = None) -> InlineTask:
+    def new_sub_task(self, task_msg: str, task_prefix: Optional[str] = None) -> Optional[InlineTask]:
         """
         Create a new inline task as a subtask of this file task.
         

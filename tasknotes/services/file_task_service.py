@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Set, Tuple, Union, Any, Iterator
 from tasknotes.interface.file_service import FileService
 from tasknotes.interface.numbering_service import NumberingService
 from tasknotes.interface.task import Task, InlineTask, FileTask, TaskService
-from tasknotes.interface.markdown_service import MarkdownService, HeadSection, ListBlock, DocumentMeta
+from tasknotes.interface.markdown_service import MarkdownService, HeadSection, ListBlock, ListItem,DocumentMeta
 from tasknotes.interface.edit_session import EditSession, EditOperation
 from tasknotes.core.config import config
 from tasknotes.services.numbering_service import TaskNumberingService
@@ -43,7 +43,8 @@ FILE_TASK_TEMPLATE = """# {name}
 class InlineTaskImpl(InlineTask):
     """Implementation of InlineTask interface."""
     
-    def __init__(self, file_service: FileService, numbering_service: NumberingService, task_id: str, task_msg: str, parent_task: 'FileTaskImpl'):
+    def __init__(self, file_service: FileService, numbering_service: NumberingService,
+                 edit_session: EditSession, list_item: 'ListItem'):
         """Initialize an InlineTaskImpl instance.
         
         Args:
@@ -52,18 +53,25 @@ class InlineTaskImpl(InlineTask):
             task_id: ID of the task
             task_msg: Description of the task
             parent_task: The parent FileTask that contains this InlineTask
+            list_item: The ListItem object representing this task in the markdown
         """
         self._task_id = task_id
         self.file_service = file_service
         self.numbering_service = numbering_service
         self.task_msg = task_msg
         self.parent_task = parent_task
+        self.list_item = list_item
     
     @property
     def task_id(self) -> str:
         """Get the task ID."""
         return self._task_id
     
+    @property
+    def task_message(self) -> str:
+        """获取任务ID"""
+        return self._task_id
+
     def convert_task(self) -> FileTask:
         """Convert this inline task to a file task."""
         raise NotImplementedError("convert_task not implemented")
@@ -265,25 +273,11 @@ class FileTaskImpl(FileTask):
             else:
                 # 没有列表，在任务部分的标题后创建新列表
                 # 使用 task_section 的 text_range 属性获取标题的范围
-                section_start, section_end = task_section.text_range
+                _, section_end = task_section.text_range
                 
-                # 获取当前内容
-                current_content = edit_session.get_content()
-                print("head ctx: ", current_content[section_start:section_end])
-                
-                # 在标题结束位置插入新任务
-                # 如果标题后有内容，在内容后添加新行并插入任务
-                # 如果标题后没有内容，直接在标题后插入任务
-                
-                # 检查标题后是否有内容
-                if section_end > 0:
-                    # 有内容，在部分结束处插入新任务
-                    task_entry = f"\n- [ ] {task_id}: {task_msg}"
-                    edit_session.insert(section_end, task_entry)
-                else:
-                    # 没有内容，在标题结束处插入新任务
-                    task_entry = f"\n- [ ] {task_id}: {task_msg}"
-                    edit_session.insert(section_end, task_entry)
+                # 有内容，在部分结束处插入新任务
+                task_entry = f"\n- [ ] {task_id}: {task_msg}"
+                edit_session.insert(section_end -1, task_entry)
         else:
             # 没有找到任务部分，添加新部分
             current_content = edit_session.get_content()
@@ -291,7 +285,100 @@ class FileTaskImpl(FileTask):
         
         return True
     
-    def new_sub_task(self, task_msg: str, task_prefix: Optional[str] = None) -> InlineTask:
+    def _get_tasks(self) -> List[Tuple[ListItem, str]]:
+        """获取所有任务列表项及其对应的任务ID
+        
+        Returns:
+            List[Tuple[ListItem, str]]: 列表项和任务ID的元组列表
+                任务ID可能为空字符串，表示该任务没有明确的ID
+        """
+        # 获取任务部分名称（支持国际化）
+        task_section_name = config.get("tasks.section_name", "Tasks")
+        
+        # 使用当前上下文解析内容
+        headers = self.get_headers()
+        
+        # 查找任务部分
+        task_section = None
+        for header in headers:
+            if header.text == task_section_name and header.head_level == 2:  # ## Tasks
+                task_section = header
+                break
+        
+        if not task_section:
+            return []
+        
+        # 查找任务列表
+        task_list_blocks = list(task_section.get_lists())
+        if not task_list_blocks:
+            return []
+        
+        result = []
+        # 处理所有列表块中的任务项
+        for list_block in task_list_blocks:
+            for list_item in list_block.list_items():
+                # 只处理任务类型的列表项
+                if list_item.is_task:
+                    # 解析任务ID
+                    task_id = self._parse_task_id(list_item.text)
+                    result.append((list_item, task_id))
+        
+        return result
+
+    def _parse_task_id(self, text: str) -> str:
+        """从任务文本中解析任务ID
+        
+        支持以下格式:
+        - "task" (无ID，返回空字符串)
+        - "`TASK-xxx`yyyyy" (返回 "TASK-xxx")
+        - "[`TASK-xxx`yyyyy](Task-xxx.md)" (返回 "TASK-xxx")
+        
+        Args:
+            text: 任务文本
+        
+        Returns:
+            str: 解析出的任务ID，如果没有ID则返回空字符串
+        """
+        # 尝试匹配 `TASK-xxx` 格式
+        backtick_pattern = r'`([A-Z]+-\d+)`'
+        backtick_match = re.search(backtick_pattern, text)
+        if backtick_match:
+            return backtick_match.group(1)
+        
+        # 尝试匹配 [`TASK-xxx`](Task-xxx.md) 格式
+        link_pattern = r'\[`([A-Z]+-\d+)`.*?\]\(.*?\)'
+        link_match = re.search(link_pattern, text)
+        if link_match:
+            return link_match.group(1)
+        
+        # 没有找到任务ID
+        return ''
+
+    def _extract_task_msg(self, text: str, task_id: str) -> str:
+        """从任务文本中提取任务消息
+        
+        Args:
+            text: 任务文本
+            task_id: 任务ID
+        
+        Returns:
+            str: 提取出的任务消息
+        """
+        if not task_id:
+            # 没有任务ID，整个文本都是任务消息
+            return text.strip()
+        
+        # 移除任务ID及其格式化部分
+        # 处理 `TASK-xxx` 格式
+        msg = re.sub(r'`' + re.escape(task_id) + r'`\s*', '', text)
+        # 处理 [`TASK-xxx`](link) 格式
+        msg = re.sub(r'\[`' + re.escape(task_id) + r'`.*?\]\(.*?\)\s*', '', msg)
+        # 处理 TASK-xxx: 格式
+        msg = re.sub(re.escape(task_id) + r':\s*', '', msg)
+        
+        return msg.strip()
+
+    def new_sub_task(self, task_msg: str, task_prefix: Optional[str] = None) -> Optional[InlineTask]:
         """Create a new inline task as a subtask of this file task.
         
         Args:
@@ -328,15 +415,47 @@ class FileTaskImpl(FileTask):
             # 更新上下文（使用setter，会自动处理缓存）
             self.context = updated_content
             
-            # 保存到文件
-            self._save_content()
+            # 重新解析文档以获取新添加的列表项
+            self._parse_cache = None  # 清除缓存，确保重新解析
+            task_items = self._get_tasks()
+            
+            # 查找刚刚添加的任务
+            for list_item, item_task_id in task_items:
+                if item_task_id == task_id:
+                    # 创建并返回 InlineTask 实例，包含对应的 ListItem
+                    return InlineTaskImpl(
+                        self.file_service,
+                        self.numbering_service,
+                        self.get_edit_session(),
+                        list_item
+                    )
         
-        # 创建并返回 InlineTask 实例
-        return InlineTaskImpl(self.file_service, self.numbering_service, task_id, task_msg, self)
-    
-    def tasks(self) -> List[Task]:
-        """Get all subtasks of this file task."""
-        raise NotImplementedError("tasks not implemented")
+        # 如果没有找到对应的列表项，创建失败
+        return None
+        
+    def tasks(self) -> List[InlineTask]:
+        """Get all subtasks of this file task.
+        
+        Returns:
+            List[InlineTask]: List of inline tasks in this file task
+        """
+        task_items = self._get_tasks()
+        
+        result = []
+        for list_item, task_id in task_items:
+            # 从列表项中提取任务消息
+            task_msg = self._extract_task_msg(list_item.text, task_id)
+            
+            # 创建InlineTask实例
+            inline_task = InlineTaskImpl(
+                    self.file_service,
+                    self.numbering_service,
+                    self.get_edit_session(),
+                    list_item
+            )
+            result.append(inline_task)
+        
+        return result
     
     def delete(self, task_id: Optional[str] = None, force: bool = False) -> bool:
         """Delete this task or a subtask."""

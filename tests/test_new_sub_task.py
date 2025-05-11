@@ -151,6 +151,11 @@ class MockFileTaskImpl(FileTaskImpl):
         """获取任务ID"""
         return self._task_id
     
+    @property
+    def task_message(self) -> str:
+        """获取任务ID"""
+        return self._task_id
+
     def mark_as_done(self) -> bool:
         """将任务标记为已完成"""
         return True
@@ -170,10 +175,6 @@ class MockFileTaskImpl(FileTaskImpl):
     def tags(self, new_tags: Optional[List[str]] = None) -> List[str]:
         """获取或替换任务标签"""
         return []
-    
-    def _save_content(self) -> None:
-        """保存内容到文件"""
-        pass
     
     def tasks(self) -> List[Task]:
         """获取所有子任务"""
