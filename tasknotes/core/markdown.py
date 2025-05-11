@@ -300,62 +300,20 @@ class TreeSitterMarkdownService(MarkdownService):
         )
     
     def get_meta(self, content: str) -> DocumentMeta:
-        """Extract metadata (YAML frontmatter) from the markdown content."""
-        tree = self.parser.parse(bytes(content, 'utf8'))
-        root_node = tree.root_node
+        """Extract metadata (YAML frontmatter) from the markdown content.
         
-        # Find frontmatter section
-        for child in root_node.children:
-            if child.type == 'minus_metadata':
-                yaml_text = content[child.start_byte:child.end_byte]
-                start_pos = child.start_byte
-                end_pos = child.end_byte
-                
-                try:
-                    # PyYAML can handle documents with --- markers directly
-                    for doc in yaml.safe_load_all(yaml_text):
-                        if doc and isinstance(doc, dict):
-                            return TreeSitterDocumentMeta(
-                                _data=doc,
-                                _start_pos=start_pos,
-                                _end_pos=end_pos
-                            )
-                except yaml.YAMLError:
-                    pass
-                    
-        # Return empty metadata if no frontmatter found
-        return TreeSitterDocumentMeta(
-            _data={},
-            _start_pos=0,
-            _end_pos=0
-        )
+        This method reuses the parse method to ensure consistent behavior.
+        """
+        meta, _ = self.parse(content)
+        return meta
     
     def get_headers(self, content: str) -> Iterator[HeadSection]:
         """Extract all headers from the markdown content.
         
         This method only extracts the headers and doesn't process lists or other content.
-        Lists are processed lazily when HeadSection.get_lists() is called.
-        
-        Args:
-            content: The markdown content to parse.
-            
-        Returns:
-            An iterator of HeadSection objects.
         """
-        tree = self.parser.parse(bytes(content, 'utf8'))
-        
-        # Find all header nodes
-        def find_headers(node):
-            if node.type == 'atx_heading':
-                header = self._process_header_node(node, content)
-                if header:
-                    yield header
-            
-            # Continue with children
-            for child in node.children:
-                yield from find_headers(child)
-        
-        yield from find_headers(tree.root_node)
+        _, headers = self.parse(content)
+        return headers
     
     def parse(self, content: str) -> Tuple[DocumentMeta, Iterator[HeadSection]]:
         """Parse markdown content and extract both metadata and headers.
@@ -397,74 +355,66 @@ class TreeSitterMarkdownService(MarkdownService):
                     pass
         
         # Extract headers
-        def find_headers(node):
+        # First collect all header nodes
+        header_nodes = []
+        
+        def collect_headers(node):
             if node.type == 'atx_heading':
-                header = self._process_header_node(node, content)
-                if header:
-                    yield header
-            
+                header_nodes.append(node)
+        
             # Continue with children
             for child in node.children:
-                yield from find_headers(child)
+                collect_headers(child)
         
-        headers = find_headers(root_node)
+        collect_headers(root_node)
+        
+        # Sort header nodes by their position in the document
+        header_nodes.sort(key=lambda node: node.start_byte)
+        
+        # Process headers in order
+        headers_list = []
+        for i, node in enumerate(header_nodes):
+            # If this is not the last header, set its end position to the start of the next header
+            next_pos = header_nodes[i+1].start_byte if i < len(header_nodes) - 1 else len(content)
+        
+            # Get header level and text
+            level = 0
+            text = ""
+            for child in node.children:
+                if child.type == 'atx_h1_marker':
+                    level = 1
+                elif child.type == 'atx_h2_marker':
+                    level = 2
+                elif child.type == 'atx_h3_marker':
+                    level = 3
+                elif child.type == 'atx_h4_marker':
+                    level = 4
+                elif child.type == 'atx_h5_marker':
+                    level = 5
+                elif child.type == 'atx_h6_marker':
+                    level = 6
+                elif child.type == 'inline':
+                    text = content[child.start_byte:child.end_byte].strip()
+        
+            if level:
+                # Create header section with node reference
+                header = TreeSitterHeadSection(
+                    _text=text,
+                    _level=level,
+                    _start_pos=node.start_byte,
+                    _end_pos=next_pos,
+                    _node=node,
+                    _content=content,
+                    _service=self
+                )
+                headers_list.append(header)
+    
+        # Return headers as an iterator
+        headers = iter(headers_list)
         
         return meta, headers
     
-    def _process_header_node(self, node, content: str) -> Optional[TreeSitterHeadSection]:
-        """Process a header node and extract its text and level.
-        
-        Args:
-            node: The tree-sitter node representing the header.
-            content: The full markdown content.
-            
-        Returns:
-            A TreeSitterHeadSection object, or None if the node is not a valid header.
-        """
-        if node.type != 'atx_heading':
-            return None
-            
-        # Get header level (number of #)
-        level = 0
-        text = ""
-        for child in node.children:
-            if child.type == 'atx_h1_marker':
-                level = 1
-            elif child.type == 'atx_h2_marker':
-                level = 2
-            elif child.type == 'atx_h3_marker':
-                level = 3
-            elif child.type == 'atx_h4_marker':
-                level = 4
-            elif child.type == 'atx_h5_marker':
-                level = 5
-            elif child.type == 'atx_h6_marker':
-                level = 6
-            elif child.type == 'inline':
-                text = content[child.start_byte:child.end_byte].strip()
-        
-        if not level:
-            return None
-            
-        # Find the end of the section by looking for the next header
-        end_pos = len(content)
-        current = node
-        while current:
-            current = current.next_sibling
-            if current and current.type == 'atx_heading':
-                end_pos = current.start_byte
-                break
-            
-        # Create header section with node reference
-        return TreeSitterHeadSection(
-            _text=text,
-            _level=level,
-            _start_pos=node.start_byte,
-            _end_pos=end_pos,
-            _node=node,
-            _content=content,
-            _service=self
-        )
+    # _process_header_node 方法已被移除，因为其功能已被整合到 parse 方法中
 
 
 def create_markdown_service() -> MarkdownService:

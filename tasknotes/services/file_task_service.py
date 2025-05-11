@@ -7,7 +7,7 @@ and TaskService interfaces defined in the task module.
 import os
 import time
 import re
-from typing import Dict, List, Optional, Set, Tuple, Union, Any
+from typing import Dict, List, Optional, Set, Tuple, Union, Any, Iterator
 
 from tasknotes.interface.file_service import FileService
 from tasknotes.interface.numbering_service import NumberingService
@@ -40,24 +40,34 @@ FILE_TASK_TEMPLATE = """# {name}
 
 """
 
-class FileTaskImpl(Task):
-    """Base implementation of Task interface."""
+class InlineTaskImpl(InlineTask):
+    """Implementation of InlineTask interface."""
     
-    def __init__(self, task_id: str):
-        """Initialize a FileTaskImpl instance.
+    def __init__(self, file_service: FileService, numbering_service: NumberingService, task_id: str, task_msg: str, parent_task: 'FileTaskImpl'):
+        """Initialize an InlineTaskImpl instance.
         
         Args:
+            file_service: The file service to use for storage operations
+            numbering_service: The numbering service to use for generating task IDs
             task_id: ID of the task
+            task_msg: Description of the task
+            parent_task: The parent FileTask that contains this InlineTask
         """
         self._task_id = task_id
-        self._markdown_service = None
-        self._parse_cache = None
+        self.file_service = file_service
+        self.numbering_service = numbering_service
+        self.task_msg = task_msg
+        self.parent_task = parent_task
     
     @property
     def task_id(self) -> str:
         """Get the task ID."""
         return self._task_id
     
+    def convert_task(self) -> FileTask:
+        """Convert this inline task to a file task."""
+        raise NotImplementedError("convert_task not implemented")
+        
     def mark_as_done(self) -> bool:
         """Mark the task as done."""
         raise NotImplementedError("mark_as_done not implemented")
@@ -79,27 +89,7 @@ class FileTaskImpl(Task):
         raise NotImplementedError("tags not implemented")
 
 
-class InlineTaskImpl(FileTaskImpl, InlineTask):
-    """Implementation of InlineTask interface."""
-    
-    def __init__(self, file_service: FileService, task_id: str, parent_task: 'FileTaskImpl'):
-        """Initialize an InlineTaskImpl instance.
-        
-        Args:
-            file_service: The file service to use for storage operations
-            task_id: ID of the task
-            parent_task: The parent FileTask that contains this InlineTask
-        """
-        super().__init__(task_id)
-        self.file_service = file_service
-        self.parent_task = parent_task
-    
-    def convert_task(self) -> FileTask:
-        """Convert this inline task to a file task."""
-        raise NotImplementedError("convert_task not implemented")
-
-
-class FileTaskImpl(FileTaskImpl, FileTask):
+class FileTaskImpl(FileTask):
     """Implementation of FileTask interface."""
     
     def __init__(self, file_service: FileService, numbering_service: NumberingService, task_id: str, context: str):
@@ -245,56 +235,61 @@ class FileTaskImpl(FileTaskImpl, FileTask):
         task_entry = f"- [ ] {task_id}: {task_msg}\n"
         
         if task_section:
-            # 找到了任务部分，检查是否已有任务列表
-            found, _ = self._find_or_create_task_list(task_section)
+            # 找到了任务部分，使用 _find_or_create_task_list 获取任务列表
+            found, task_list = self._find_or_create_task_list(task_section)
             
             if found:
-                # 已有列表，在列表末尾添加新任务
-                section_start, section_end = task_section.text_range
-                current_content = edit_session.get_content()
-                section_content = current_content[section_start:section_end]
+                # 有列表，找到最后一个列表项
+                list_items = list(task_list.list_items())
                 
-                # 找到最后一个列表项的位置
-                lines = section_content.split('\n')
-                last_list_line = -1
-                
-                for i, line in enumerate(lines):
-                    if line.strip().startswith('- '):
-                        last_list_line = i
-                
-                if last_list_line >= 0:
-                    # 在最后一个列表项后添加新任务
-                    # 计算插入位置
-                    insert_pos = section_start
-                    for i in range(last_list_line + 1):
-                        insert_pos = current_content.find('\n', insert_pos) + 1
+                if list_items:
+                    # 有列表项，在最后一个列表项的行尾插入
+                    last_item = list_items[-1]
+                    _, last_item_end = last_item.text_range
                     
-                    # 使用edit_session插入新任务
+                    # 获取当前内容
+                    current_content = edit_session.get_content()
+                    
+                    # 使用 last_item_end 作为插入位置
+                    # 这样可以正确处理嵌套列表的情况
+                    insert_pos = last_item_end - 1
+                    
+                    # 在列表项结束位置插入新任务
+                    task_entry = f"- [ ] {task_id}: {task_msg}\n"
                     edit_session.insert(insert_pos, task_entry)
-                    return True
                 else:
-                    # 没有找到列表项，在部分标题后添加新列表
-                    header_line_end = section_start + section_content.find('\n') + 1
-                    edit_session.insert(header_line_end, task_entry)
-                    return True
+                    # 列表存在但没有列表项，在列表开始处插入
+                    list_start, _ = task_list.text_range
+                    task_entry = f"- [ ] {task_id}: {task_msg}\n"
+                    edit_session.insert(list_start, task_entry)
             else:
-                # 没有找到列表，在部分标题后添加新列表
+                # 没有列表，在任务部分的标题后创建新列表
+                # 使用 task_section 的 text_range 属性获取标题的范围
                 section_start, section_end = task_section.text_range
-                current_content = edit_session.get_content()
-                section_content = current_content[section_start:section_end]
-                header_line_end = section_start + section_content.find('\n') + 1
                 
-                if header_line_end > section_start:
-                    edit_session.insert(header_line_end, task_entry)
-                    return True
+                # 获取当前内容
+                current_content = edit_session.get_content()
+                print("head ctx: ", current_content[section_start:section_end])
+                
+                # 在标题结束位置插入新任务
+                # 如果标题后有内容，在内容后添加新行并插入任务
+                # 如果标题后没有内容，直接在标题后插入任务
+                
+                # 检查标题后是否有内容
+                if section_end > 0:
+                    # 有内容，在部分结束处插入新任务
+                    task_entry = f"\n- [ ] {task_id}: {task_msg}"
+                    edit_session.insert(section_end, task_entry)
+                else:
+                    # 没有内容，在标题结束处插入新任务
+                    task_entry = f"\n- [ ] {task_id}: {task_msg}"
+                    edit_session.insert(section_end, task_entry)
         else:
             # 没有找到任务部分，添加新部分
             current_content = edit_session.get_content()
-            edit_session.insert(len(current_content), f"\n## {task_section_name}\n{task_entry}")
-            return True
+            edit_session.insert(len(current_content), f"\n## {task_section_name}\n- [ ] {task_id}: {task_msg}\n")
         
-        # 如果所有尝试都失败，返回失败
-        return False
+        return True
     
     def new_sub_task(self, task_msg: str, task_prefix: Optional[str] = None) -> InlineTask:
         """Create a new inline task as a subtask of this file task.
@@ -313,7 +308,6 @@ class FileTaskImpl(FileTaskImpl, FileTask):
         # 获取任务ID
         if task_prefix is None:
             task_prefix = self.numbering_service.get_default_prefix()
-            
         task_id = self.numbering_service.get_next_number(task_prefix)
         
         # 获取任务部分名称（支持国际化）
@@ -322,19 +316,23 @@ class FileTaskImpl(FileTaskImpl, FileTask):
         # 获取编辑会话
         edit_session = self.get_edit_session()
         
-        # 使用辅助函数添加任务
+        # 使用改进的 _append_task_to_list 方法添加任务
+        # 该方法使用 ListItem 的 text_range 属性，避免字符串解析
         content_modified = self._append_task_to_list(task_id, task_msg, task_section_name, edit_session)
         
-        # 如果内容被修改，更新上下文
+        # 如果内容被修改，更新上下文并保存
         if content_modified:
             # 获取更新后的内容
             updated_content = edit_session.get_content()
             
             # 更新上下文（使用setter，会自动处理缓存）
             self.context = updated_content
+            
+            # 保存到文件
+            self._save_content()
         
         # 创建并返回 InlineTask 实例
-        return InlineTaskImpl(self.file_service, task_id, self)
+        return InlineTaskImpl(self.file_service, self.numbering_service, task_id, task_msg, self)
     
     def tasks(self) -> List[Task]:
         """Get all subtasks of this file task."""
@@ -434,7 +432,9 @@ class FileTaskService(FileTaskImpl, TaskService):
         
         # 找到 ## Tasks 部分并添加新任务
         task_section_pattern = r"(## Tasks\s*\n)"
-        task_entry = f"- [ ] {task_id}: {task_msg.split('\n')[0] if '\n' in task_msg else task_msg}\n"
+        # 使用r前缀创建原始字符串，避免反斜杠问题
+        newline = "\n"
+        task_entry = f"- [ ] {task_id}: {task_msg.split(newline)[0] if newline in task_msg else task_msg}{newline}"
         
         if re.search(task_section_pattern, root_content):
             updated_content = re.sub(task_section_pattern, f"\g<1>{task_entry}", root_content)

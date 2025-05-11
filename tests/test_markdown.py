@@ -423,6 +423,69 @@ def test_parse_empty_document():
     assert len(headers) == 0
 
 
+def test_parse_with_empty_tasks_section():
+    """Test the parse method with a document that has a Tasks section but no tasks list."""
+    service = create_markdown_service()
+    content = """# Test Document
+        
+## Tasks
+
+This section should contain tasks.
+
+## Notes
+
+Some notes here.
+"""
+    
+    # Call the parse method
+    meta, headers_iterator = service.parse(content)
+    headers = list(headers_iterator)
+    
+    # Verify empty metadata
+    assert meta.data == {}
+    start, end = meta.text_range
+    assert start == 0
+    assert end == 0
+    
+    # Verify headers
+    assert len(headers) == 3  # Should have 3 headers: Test Document, Tasks, Notes
+    assert headers[0].text == "Test Document"
+    assert headers[0].head_level == 1
+    assert headers[1].text == "Tasks"
+    assert headers[1].head_level == 2
+    assert headers[2].text == "Notes"
+    assert headers[2].head_level == 2
+    
+    # Verify Tasks section has no lists
+    tasks_header = headers[1]
+    lists = list(tasks_header.get_lists())
+    assert len(lists) == 0  # Should have no lists under Tasks section
+    
+    # Verify header text ranges
+    # Main header
+    main_start, main_end = headers[0].text_range
+    assert main_start >= 0
+    assert main_end > main_start
+    assert content[main_start:main_end].strip().startswith('# Test Document')
+    
+    # Get all text ranges first
+    tasks_start, tasks_end = headers[1].text_range
+    notes_start, notes_end = headers[2].text_range
+    
+    # Tasks header
+    assert tasks_start > main_start
+    assert tasks_end > tasks_start
+    # Tasks section should start with ## Tasks and end before ## Notes
+    assert content[tasks_start:tasks_start+10].strip().startswith('## Tasks')
+    assert tasks_end == notes_start  # Tasks section should end exactly where Notes section begins
+    
+    # Notes header
+    assert notes_start > tasks_start
+    assert notes_end > notes_start
+    assert content[notes_start:notes_start+10].strip().startswith('## Notes')
+    assert notes_end == len(content)  # Last header's end should be the end of the document
+
+
 def test_document_meta_set_and_apply():
     """Test the set and apply methods of DocumentMeta."""
     service = create_markdown_service()
