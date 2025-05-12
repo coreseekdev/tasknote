@@ -19,6 +19,8 @@ class MockFileService(FileService):
     
     def __init__(self):
         self.files = {}
+        self._transaction_active = False
+        self._transaction_files = {}
     
     def read_file(self, path: str) -> str:
         if path not in self.files:
@@ -47,6 +49,32 @@ class MockFileService(FileService):
         if path not in self.files:
             raise FileNotFoundError(f"File not found: {path}")
         return 0.0
+        
+    def transaction(self, commit_message: str = None):
+        """Start a transaction."""
+        return self
+        
+    def begin_transaction(self) -> None:
+        """Begin a transaction."""
+        self._transaction_active = True
+        self._transaction_files = {}
+        
+    def abort_transaction(self) -> None:
+        """Abort a transaction."""
+        self._transaction_active = False
+        self._transaction_files = {}
+        
+    def __enter__(self):
+        self.begin_transaction()
+        return self
+        
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is None:
+            # No exception, commit the transaction
+            for path, content in self._transaction_files.items():
+                self.files[path] = content
+        self._transaction_active = False
+        self._transaction_files = {}
 
 
 class TestNumberingService(unittest.TestCase):

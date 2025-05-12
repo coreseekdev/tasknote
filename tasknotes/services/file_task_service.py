@@ -10,6 +10,7 @@ and mutable operations, and supports transaction-based operations.
 import os
 import time
 import re
+from tkinter import N
 from typing import Dict, List, Optional, Set, Tuple, Union, Any, Iterator, cast
 
 from tasknotes.interface.file_service import FileService
@@ -64,16 +65,32 @@ class TaskBase:
         # 获取任务目录配置
         self.tasks_dir = config.get("tasks.active_dir", "tasks")
         self.archived_dir = config.get("tasks.archived_dir", "archived")
-    
-    @property
-    def is_completed(self) -> bool:
-        """判断任务是否已完成"""
-        return self.status == TaskStatus.DONE
-    
-    def get_tags(self) -> List[str]:
-        """获取与此任务关联的标签列表"""
-        return []  # 基类默认实现，子类应覆盖
 
+    def find_task_file_path(self, task_file: str) -> Optional[str]:
+        """查找任务文件路径
+        
+        检查活动目录和归档目录，返回找到的文件路径或 None
+
+        Args:
+            task_file: 预期的 file task 文件名
+            
+        Returns:
+            str: 找到的文件路径，如果都不存在则返回 None
+        """
+        # file_name = ta# f"{task_id}.md"
+        
+        # 首先检查活动目录
+        active_task_path = os.path.join(self.tasks_dir, task_file)
+        if self.file_service.file_exists(active_task_path):
+            return active_task_path
+            
+        # 然后检查归档目录
+        archived_task_path = os.path.join(self.archived_dir, task_file)
+        if self.file_service.file_exists(archived_task_path):
+            return archived_task_path
+            
+        # 都不存在则返回 None
+        return None
 
 class InlineTaskImpl(TaskBase):
     """Implementation of InlineTask and InlineTaskMut interfaces."""
@@ -101,9 +118,13 @@ class InlineTaskImpl(TaskBase):
         self._task_id = parsed_result.get('task_id', None) or "task_id"
         self._task_link = parsed_result.get('link', None)
         self._task_message = parsed_result.get('text', list_item.text)
-        self._is_done = "[x]" in list_item.text or "[X]" in list_item.text
+
+        # list_item 中并没有 [ ] 或 [X] 
+        if list_item.is_task:
+            # 当 is_task 时， is_completed_task 永不为 None
+            self._is_done = list_item.is_completed_task 
         
-        # 缓存相关的 FileTask
+        # 缓存相关的 FileTask, 对于 “真正的”(task 不是 link 的 ) Inline Task 永远为 None
         self._related_file_task_cache = None
     
     @property
@@ -116,89 +137,6 @@ class InlineTaskImpl(TaskBase):
         """获取任务消息内容"""
         return self._task_message
         
-    def as_mutable(self) -> 'InlineTaskMut':
-        """获取此任务的可变版本"""
-        return cast(InlineTaskMut, self)
-        
-    def _find_task_file_path(self, task_id: str) -> Optional[str]:
-        """查找任务文件路径
-        
-        检查活动目录和归档目录，返回找到的文件路径或 None
-        
-        Args:
-            task_id: 任务ID
-            
-        Returns:
-            str: 找到的文件路径，如果都不存在则返回 None
-        """
-        file_name = f"{task_id}.md"
-        
-        # 首先检查活动目录
-        active_task_path = os.path.join(self.tasks_dir, file_name)
-        if self.file_service.file_exists(active_task_path):
-            return active_task_path
-            
-        # 然后检查归档目录
-        archived_task_path = os.path.join(self.archived_dir, file_name)
-        if self.file_service.file_exists(archived_task_path):
-            return archived_task_path
-            
-        # 都不存在则返回 None
-        return None
-
-    def convert_task(self) -> 'FileTaskMut':
-        """Convert this inline task to a file task.
-        
-        如果当前任务已经有关联的 FileTask，则直接返回该 FileTask。
-        否则，创建一个新的 FileTask 并将当前任务文本替换为链接形式。
-        
-        Returns:
-            FileTaskMut: 关联的文件任务
-            
-        Raises:
-            NotImplementedError: 如果无法转换任务
-        """
-        # 1. 检查是否已经有关联的 FileTask
-        related_task = self.get_related_file_task()
-        if related_task:
-            return related_task.as_mutable()
-            
-        # 2. 如果没有，创建一个新的 FileTask
-        # 2.1 生成文件名和路径
-        task_id = self.task_id
-        file_name = f"{task_id}.md"
-        file_path = os.path.join(self.tasks_dir, file_name)
-        
-        # 2.2 使用模板创建文件内容
-        title = self.task_message
-        content = FILE_TASK_TEMPLATE.format(
-            name=title,
-            description=""
-        )
-        
-        # 2.3 写入文件
-        self.file_service.write_file(file_path, content)
-        
-        # 2.4 创建 FileTask 对象
-        file_task = FileTaskImpl(
-            file_service=self.file_service,
-            numbering_service=self.numbering_service,
-            task_id=task_id,
-            context=content
-        )
-        
-        # 3. 更新当前任务文本，添加链接
-        new_text = f"[{self.task_message}]({task_id})"
-        self._edit_session.apply_operation(EditOperation.REPLACE, 
-                                          self.list_item, 
-                                          {"text": new_text})
-        
-        # 4. 更新缓存
-        self._task_link = task_id
-        self._related_file_task_cache = file_task
-        
-        return file_task
-
     def get_related_file_task(self) -> Optional['FileTask']:
         """
         返回当前内联任务关联的 FileTask，如果存在。
@@ -223,39 +161,96 @@ class InlineTaskImpl(TaskBase):
         if not self._task_link:
             return None
             
-        # 查找任务文件
-        task_id = self._task_link
-        file_path = self._find_task_file_path(task_id)
+        # 查找任务文件, 此处默认 link 中已经存在扩展名 .md
+        file_path = self.find_task_file_path(self._task_link)
         
         if not file_path:
-            raise NotImplementedError(f"Task file for {task_id} not found")
+            # 如果删除的不完整可能导致这个异常， 后续日志系统接入后，应转为日志
+            raise NotImplementedError(f"Task file {self._task_link} not found")
+            # return None 
             
         # 读取文件内容
         content = self.file_service.read_file(file_path)
         
-        # 创建 FileTask 对象
+        # 检查 链接记录的 task_id 与 当前任务记录的是否一致
+        task_id = os.path.basename(self._task_link)
+        if task_id != self.task_id:
+            # 日志系统接入后，改为记录日志
+            raise NotImplementedError(f"Inconsistent task ID: link points to {task_id}, but current task ID is {self._task_id}")
+            # return None
+
+        # 创建 FileTask 对象 并 缓存
+        self._related_file_task_cache = FileTaskImpl(
+            file_service=self.file_service,
+            numbering_service=self.numbering_service,
+            task_id=self.task_id,
+            context=content
+        )
+
+        return self._related_file_task_cache
+
+    def as_mutable(self) -> 'InlineTaskMut':
+        """获取此任务的可变版本"""
+        return cast(InlineTaskMut, self)
+
+    # 以下为 InlineTaskMut 的接口
+
+    def convert_task(self) -> 'FileTask':
+        """Convert this inline task to a file task.
+        
+        如果当前任务已经有关联的 FileTask，则直接返回该 FileTask。
+        否则，创建一个新的 FileTask 并将当前任务文本替换为链接形式。
+        
+        Returns:
+            FileTask: 关联的文件任务
+            
+        Raises:
+            NotImplementedError: 如果无法转换任务
+        """
+        # 1. 检查是否已经有关联的 FileTask
+        related_task = self.get_related_file_task()
+        if related_task:
+            return related_task
+            
+        # 2. 如果没有，创建一个新的 FileTask
+        # 2.1 检查是否已经存在同名的
+        file_path = self.find_task_file_path(task_id)
+        if file_path:
+            # 2.2 已经存在同名文件, 读取文件内容
+            # 此种情况，同一个 task 作为多个 task 的 sub-task , 之前已经转为 file-task 但是未及时更新
+            content = self.file_service.read_file(file_path)
+        else:
+            # 2.2 需要创建新的，默认在 tasks 下，即作为 active task
+            file_name = f"{self.task_id}.md"
+            file_path = os.path.join(self.tasks_dir, file_name)
+        
+            # 2.3 使用模板创建文件内容
+            content = FILE_TASK_TEMPLATE.format(
+                name=self.task_message,
+                description=""
+            )
+        
+        # 2.3 不直接写入文件，由上层调用者负责
+        # 文件路径保存在 file_task 对象中
+        
+        # 2.4 创建 FileTask 对象, 并主动设置文件名
         file_task = FileTaskImpl(
             file_service=self.file_service,
             numbering_service=self.numbering_service,
             task_id=task_id,
             context=content
-        )
-        if task_id != self._task_id:
-            raise NotImplementedError(f"Inconsistent task ID: link points to {task_id}, but current task ID is {self._task_id}")
+        ).set_filename(file_path)
         
-        # 使用辅助方法查找文件路径
-        task_path = self._find_task_file_path(task_id)
-        if not task_path:
-            # 如果没有找到文件，抛出异常
-            raise NotImplementedError(f"FileTask not found: {file_name}. The task may have been deleted.")
+        # 3. 更新当前任务文本，添加链接
+        new_text = f"[{task_id}]({task_id}.md): {self.task_message}"
+        start_pos, end_pos = self.list_item.inline_item_text_range
+        self._edit_session.replace(start_pos, end_pos, new_text)
         
-        # 读取任务文件内容
-        task_content = self.file_service.read_file(task_path)
+        # 4. 更新缓存
+        self._task_link = f"{self.task_id}.md"
+        self._related_file_task_cache = file_task
         
-        # 创建 FileTask 实例并缓存
-        self._related_file_task_cache = FileTaskImpl(self.file_service, self.numbering_service, task_id, task_content)
-        
-        return self._related_file_task_cache
+        return file_task
 
     def mark_as_done(self) -> bool:
         """将任务标记为已完成。"""
@@ -393,6 +388,9 @@ class FileTaskImpl(TaskBase):
         self._parse_cache = None
         self._is_archived = False
         
+        # 文件名，对于新建的文件，不同通过文件系统检测来判断，需要主动设置
+        self._task_file = None
+        
         # 检查任务是否已归档
         file_name = f"{task_id}.md"
         archived_path = os.path.join(self.archived_dir, file_name)
@@ -419,6 +417,11 @@ class FileTaskImpl(TaskBase):
                 return header.title
         
         return ""
+    
+    def set_filename(self, filename: str) -> 'FileTaskImpl':
+        # 主动设置 文件名，避免自动检测
+        self._task_file = filename
+        return self
     
     def as_mutable(self) -> 'FileTaskMut':
         """获取此文件任务的可变版本"""
