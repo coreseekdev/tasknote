@@ -132,9 +132,12 @@ class TreeSitterHeadSection(HeadSection):
         current = self._node.next_sibling
         while current and current.start_byte < section_end:
             if current.type == 'list':
-                block = self._service._process_list_block(current, self._content, 0)
-                if block:
-                    self._lists.append(block)
+                blocks = self._service._process_list_block(current, self._content, 0)
+                if blocks:
+                    if isinstance(blocks, list):
+                        self._lists.extend(blocks)
+                    else:
+                        self._lists.append(blocks)
             current = current.next_sibling
         
         self._lists_processed = True
@@ -223,11 +226,18 @@ class TreeSitterMarkdownService(MarkdownService):
         is_completed = None
         order = None
         
-        # Check if this is an ordered list item
-        raw_text = content[node.start_byte:node.end_byte]
-        ordered_match = re.match(r'^\s*(\d+)\.', raw_text)
-        if ordered_match:
-            order = int(ordered_match.group(1))
+        # Check for list markers
+        for child in node.children:
+            if child.type == 'list_marker_dot':
+                # For ordered lists, extract the number before the dot
+                marker_text = content[child.start_byte:child.end_byte]
+                try:
+                    # Extract just the number part
+                    number_str = ''.join(c for c in marker_text if c.isdigit())
+                    if number_str:
+                        order = int(number_str)
+                except ValueError:
+                    pass
         
         # Process item content
         paragraph_text = ""
@@ -243,8 +253,6 @@ class TreeSitterMarkdownService(MarkdownService):
                 paragraph_text = content[child.start_byte:child.end_byte].strip()
                 text = paragraph_text
         
-        # Remove list markers from text
-        text = re.sub(r'^\s*\d+\.\s+|^\s*[-*]\s+', '', text)
         
         # Create list item
         item = TreeSitterListItem(
@@ -284,9 +292,8 @@ class TreeSitterMarkdownService(MarkdownService):
         if not first_item:
             return None
 
-        # Look for ordered list marker (a number followed by a period)
-        item_text = content[first_item.start_byte:first_item.end_byte]
-        is_ordered = bool(re.match(r'^\s*\d+\.', item_text))
+        # Check for list marker types
+        is_ordered = any(c.type == 'list_marker_dot' for c in first_item.children)
         
         # Process all items
         current_items = []
@@ -295,9 +302,8 @@ class TreeSitterMarkdownService(MarkdownService):
 
         for child in node.children:
             if child.type == 'list_item':
-                # Check if this item's order type matches current block
-                item_text = content[child.start_byte:child.end_byte]
-                item_is_ordered = bool(re.match(r'^\s*\d+\.', item_text))
+                # Check if this item has a dot marker (ordered list)
+                item_is_ordered = any(c.type == 'list_marker_dot' for c in child.children)
                 
                 # If order type changes, create a new block
                 if item_is_ordered != current_is_ordered and current_items:
@@ -329,9 +335,8 @@ class TreeSitterMarkdownService(MarkdownService):
         if not blocks:
             return None
         
-        # Return first block, which may be the only one
-        # Other blocks will be handled by the parent parser
-        return blocks[0]
+        # Return all blocks
+        return blocks
     
     def get_meta(self, content: str) -> DocumentMeta:
         """Extract metadata (YAML frontmatter) from the markdown content.
