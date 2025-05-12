@@ -136,6 +136,10 @@ class TestProcessListBlock(unittest.TestCase):
         second_items = list(second_level.list_items())
         self.assertEqual(len(second_items), 2)
         
+        # Verify text of second level items
+        self.assertEqual(second_items[0].text, "Second level unordered 1")
+        self.assertEqual(second_items[1].text, "Second level unordered 2")
+        
         # Check third level ordered list
         second_item = second_items[1]  # The one with the nested list
         third_level_lists = list(second_item.get_lists())
@@ -148,6 +152,26 @@ class TestProcessListBlock(unittest.TestCase):
         self.assertEqual(len(third_items), 2)
         self.assertEqual(third_items[0].order, 1)
         self.assertEqual(third_items[1].order, 2)
+        
+        # Verify text of third level items
+        self.assertEqual(third_items[0].text, "Third level ordered 1")
+        self.assertEqual(third_items[1].text, "Third level ordered 2")
+        
+        # Check second item in first level list
+        second_first_level_item = items[1]
+        self.assertEqual(second_first_level_item.text, "Back to first level")
+        
+        # Check nested lists in second first-level item
+        second_nested_lists = list(second_first_level_item.get_lists())
+        self.assertEqual(len(second_nested_lists), 1)
+        
+        second_nested_level = second_nested_lists[0]
+        self.assertTrue(second_nested_level.is_ordered)
+        
+        second_nested_items = list(second_nested_level.list_items())
+        self.assertEqual(len(second_nested_items), 2)
+        self.assertEqual(second_nested_items[0].text, "Second level ordered 1")
+        self.assertEqual(second_nested_items[1].text, "Second level ordered 2")
 
     def test_task_list_block(self):
         """Test processing a task list block."""

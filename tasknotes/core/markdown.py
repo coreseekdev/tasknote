@@ -132,11 +132,8 @@ class TreeSitterHeadSection(HeadSection):
         while current and current.start_byte < section_end:
             if current.type == 'list':
                 blocks = self._service._process_list_block(current, self._content, 0)
-                if blocks:
-                    if isinstance(blocks, list):
-                        self._lists.extend(blocks)
-                    else:
-                        self._lists.append(blocks)
+                # Extend the lists with all blocks returned
+                self._lists.extend(blocks)
             current = current.next_sibling
         
         self._lists_processed = True
@@ -268,18 +265,13 @@ class TreeSitterMarkdownService(MarkdownService):
         for child in node.children:
             if child.type == 'list':
                 nested_blocks = self._process_list_block(child, content, level + 1)
-                if nested_blocks:
-                    # If we got a list of blocks, add each one individually
-                    if isinstance(nested_blocks, list):
-                        for block in nested_blocks:
-                            item.add_nested_list(block)
-                    else:
-                        # Otherwise add the single block
-                        item.add_nested_list(nested_blocks)
+                # Add each block in the list to the item's nested lists
+                for block in nested_blocks:
+                    item.add_nested_list(block)
         
         return item
     
-    def _process_list_block(self, node, content: str, level: int) -> Optional[TreeSitterListBlock]:
+    def _process_list_block(self, node, content: str, level: int) -> List[TreeSitterListBlock]:
         """Process a list node and its items.
         
         Args:
@@ -290,12 +282,11 @@ class TreeSitterMarkdownService(MarkdownService):
         Returns:
             A TreeSitterListBlock object, or None if the node is not a valid list.
         """
-        items = []
         
         # Determine if this is an ordered list by checking the first list_item's marker
         first_item = next((c for c in node.children if c.type == 'list_item'), None)
         if not first_item:
-            return None
+            return []
 
         # Check for list marker types
         is_ordered = any(c.type == 'list_marker_dot' for c in first_item.children)
@@ -336,17 +327,7 @@ class TreeSitterMarkdownService(MarkdownService):
                 _ordered=current_is_ordered
             ))
         
-        # If no blocks were created, return None
-        if not blocks:
-            return None
-        
-        # If we're processing a nested list (level > 0) and there's only one block,
-        # return it directly instead of a list to make nested list handling simpler
-        if level > 0 and len(blocks) == 1:
-            return blocks[0]
-        
-        # Otherwise return all blocks
-        # Nested lists will be handled by ListItem.get_lists()
+        # Always return the list of blocks, even if empty
         return blocks
     
     def get_meta(self, content: str) -> DocumentMeta:
