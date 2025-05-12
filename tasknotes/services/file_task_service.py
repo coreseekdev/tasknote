@@ -155,7 +155,6 @@ class InlineTaskImpl(TaskBase, InlineTask):
         task_path = os.path.join(self.tasks_dir, file_name)
         
         # 创建任务内容
-        from tasknotes.services.file_task_service import FILE_TASK_TEMPLATE
         task_content = FILE_TASK_TEMPLATE.format(
             name=self._task_message,
             description= ""     # 目前的实现中 description 默认为 空
@@ -166,10 +165,6 @@ class InlineTaskImpl(TaskBase, InlineTask):
         # 3. 替换当前任务文本为链接形式
         # 获取当前任务的文本范围
         start_pos, end_pos = self.list_item.inline_item_text_range
-        
-        # 检查文本范围是否包括嵌套项
-        # 这里我们假设 text_range 可能包括嵌套项，需要额外验证
-        # 由于当前接口限制，我们暂时只能处理简单情况
         
         # 创建新的任务文本
         # 注意：inline_item_text_range 不包括 Markdown 列表项的前缀部分（即 "- [ ]"）
@@ -294,56 +289,18 @@ class FileTaskImpl(TaskBase, FileTask):
     
     @property
     def task_message(self) -> str:
-        """Get the task single line message."""
-        # 简单实现，返回第一行或空字符串
-        if self._context:
-            return self._context.split('\n')[0]
+        """Get the task single line message.
+        
+        返回第一个 level 1 的标题文本。如果没有 level 1 标题，则返回空字符串。
+        """
+        
+        # 查找第一个 level 1 的标题
+        for header in self.get_headers():
+            if header.level == 1:  # level 1 对应 # 标题
+                return header.text
+        
+        # 如果没有 level 1 标题，返回空字符串
         return ""
-    
-    def mark_as_done(self) -> bool:
-        """Mark the task as done."""
-        # 简单实现，仅用于测试
-        return True
-    
-    def mark_as_undone(self) -> bool:
-        """Mark the task as not done."""
-        # 简单实现，仅用于测试
-        return True
-    
-    def tags(self, new_tags: Optional[List[str]] = None) -> List[str]:
-        """Get or replace the list of tags associated with this task."""
-        # 简单实现，仅用于测试
-        return []
-    
-    def new_sub_task(self, task_msg: str, task_prefix: Optional[str] = None) -> Optional[InlineTask]:
-        """Create a new inline task as a subtask of this file task."""
-        # 简单实现，仅用于测试
-        return None
-    
-    def tasks(self) -> List[Task]:
-        """Get all subtasks of this file task."""
-        # 简单实现，仅用于测试
-        return []
-    
-    def mark_as_archived(self, force: bool = False) -> bool:
-        """Mark this task as archived."""
-        # 简单实现，仅用于测试
-        return True
-    
-    def add_related_task(self, task_id: str) -> 'FileTask':
-        """Add an existing task as a related task to this task."""
-        # 简单实现，仅用于测试
-        return self
-    
-    def modify_task(self, task_id: Optional[str] = None, task_msg: Optional[str] = None) -> bool:
-        """Update this task or a subtask."""
-        # 简单实现，仅用于测试
-        return True
-    
-    def tag_groups(self) -> Dict[str, Dict[str, Any]]:
-        """Get the tag groups defined in this task."""
-        # 简单实现，仅用于测试
-        return {}
     
     @property
     def context(self) -> str:
@@ -631,6 +588,21 @@ class FileTaskImpl(TaskBase, FileTask):
         """Delete this task or a subtask."""
         raise NotImplementedError("delete not implemented")
     
+    def mark_as_done(self) -> bool:
+        """Mark the task as done."""
+        # 简单实现，仅用于测试
+        return True
+    
+    def mark_as_undone(self) -> bool:
+        """Mark the task as not done."""
+        # 简单实现，仅用于测试
+        return True
+    
+    def tags(self, new_tags: Optional[List[str]] = None) -> List[str]:
+        """Get or replace the list of tags associated with this task."""
+        # 简单实现，仅用于测试
+        return []
+
     def mark_as_archived(self, force: bool = False) -> bool:
         """Mark this task as archived."""
         raise NotImplementedError("mark_as_archived not implemented")
