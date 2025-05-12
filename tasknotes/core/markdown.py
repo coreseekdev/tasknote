@@ -6,7 +6,6 @@ using the tree-sitter parser for markdown document analysis.
 
 from typing import Dict, List, Iterator, Any, Optional, Tuple
 import yaml
-import re
 from dataclasses import dataclass
 from tree_sitter import Language, Parser
 
@@ -268,9 +267,15 @@ class TreeSitterMarkdownService(MarkdownService):
         # Process nested lists
         for child in node.children:
             if child.type == 'list':
-                nested_block = self._process_list_block(child, content, level + 1)
-                if nested_block:
-                    item.add_nested_list(nested_block)
+                nested_blocks = self._process_list_block(child, content, level + 1)
+                if nested_blocks:
+                    # If we got a list of blocks, add each one individually
+                    if isinstance(nested_blocks, list):
+                        for block in nested_blocks:
+                            item.add_nested_list(block)
+                    else:
+                        # Otherwise add the single block
+                        item.add_nested_list(nested_blocks)
         
         return item
     
@@ -334,18 +339,14 @@ class TreeSitterMarkdownService(MarkdownService):
         # If no blocks were created, return None
         if not blocks:
             return None
-            
-        # For nested lists, we should only return a single block
-        # For top-level lists, we return all blocks
-        if level > 0:
-            # For nested lists, combine all blocks into one if they share the same order type
-            if len(blocks) > 1:
-                first_block = blocks[0]
-                for block in blocks[1:]:
-                    if block.is_ordered == first_block.is_ordered:
-                        first_block._items.extend(block.list_items())
-                return first_block
+        
+        # If we're processing a nested list (level > 0) and there's only one block,
+        # return it directly instead of a list to make nested list handling simpler
+        if level > 0 and len(blocks) == 1:
             return blocks[0]
+        
+        # Otherwise return all blocks
+        # Nested lists will be handled by ListItem.get_lists()
         return blocks
     
     def get_meta(self, content: str) -> DocumentMeta:
