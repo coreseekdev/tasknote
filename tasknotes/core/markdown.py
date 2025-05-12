@@ -27,6 +27,8 @@ class TreeSitterListItem(ListItem):
     _level: int
     _start_pos: int
     _end_pos: int
+    _inline_start_pos: int
+    _inline_end_pos: int
     _is_task: bool = False
     _is_completed: Optional[bool] = None
     _order: Optional[int] = None
@@ -42,6 +44,10 @@ class TreeSitterListItem(ListItem):
     def text_range(self) -> Tuple[int, int]:
         return (self._start_pos, self._end_pos)
     
+    @property
+    def inline_item_text_range(self) -> Tuple[int, int]:
+        return (self._inline_start_pos, self._inline_end_pos)
+
     @property
     def is_task(self) -> bool:
         return self._is_task
@@ -247,7 +253,7 @@ class TreeSitterMarkdownService(MarkdownService):
                 is_completed = False
             elif child.type == 'paragraph':
                 # Extract text from the paragraph node
-                text = self._extract_text_from_paragraph(child, content)
+                text, inline_text_begin, inline_text_end = self._extract_text_from_paragraph(child, content)
             
         # Create list item
         item = TreeSitterListItem(
@@ -255,6 +261,8 @@ class TreeSitterMarkdownService(MarkdownService):
             _level=level,
             _start_pos=node.start_byte,
             _end_pos=node.end_byte,
+            _inline_start_pos=inline_text_begin,
+            _inline_end_pos=inline_text_end,
             _is_task=is_task,
             _is_completed=is_completed,
             _order=order
@@ -270,7 +278,7 @@ class TreeSitterMarkdownService(MarkdownService):
         
         return item
     
-    def _extract_text_from_paragraph(self, paragraph_node, content: str) -> str:
+    def _extract_text_from_paragraph(self, paragraph_node, content: str) -> Tuple[str, int, int]:
         """Extract text content from a paragraph node by finding its inline child.
         
         Args:
@@ -284,10 +292,10 @@ class TreeSitterMarkdownService(MarkdownService):
         for child in paragraph_node.children:
             if child.type == 'inline':
                 # Get text directly from the inline node
-                return content[child.start_byte:child.end_byte]
+                return content[child.start_byte:child.end_byte], child.start_byte, child.end_byte
         
         # Fallback to paragraph text if no inline node found
-        return content[paragraph_node.start_byte:paragraph_node.end_byte]
+        return content[paragraph_node.start_byte:paragraph_node.end_byte], paragraph_node.start_byte, paragraph_node.end_byte
     
     def _process_list_block(self, node, content: str, level: int) -> List[TreeSitterListBlock]:
         """Process a list node and its items.

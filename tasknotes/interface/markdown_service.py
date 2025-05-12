@@ -24,6 +24,10 @@ class ListItem(ABC):
         """The text content of the list item, excluding markers and nesting."""
     
     @property
+    def inline_item_text_range(self) -> Tuple[int, int]:
+        raise NotImplementedError
+
+    @property
     def text_range(self) -> Tuple[int, int]:
         raise NotImplementedError
 

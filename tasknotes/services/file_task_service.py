@@ -165,7 +165,7 @@ class InlineTaskImpl(TaskBase, InlineTask):
         
         # 3. 替换当前任务文本为链接形式
         # 获取当前任务的文本范围
-        start_pos, end_pos = self.list_item.text_range
+        start_pos, end_pos = self.list_item.inline_item_text_range
         
         # 检查文本范围是否包括嵌套项
         # 这里我们假设 text_range 可能包括嵌套项，需要额外验证
