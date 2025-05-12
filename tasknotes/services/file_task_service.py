@@ -1048,10 +1048,7 @@ class FileTaskImpl(TaskBase):
         
         return new_tags
 
-    def mark_as_archived(self, force: bool = False) -> bool:
-        """Mark this task as archived."""
-        raise NotImplementedError("mark_as_archived not implemented")
-    
+
     def add_related_task(self, task_id: str) -> 'FileTask':
         """Add an existing task as a related task to this task."""
         # 实际是添加一个 task_id 已知的 sub task 
@@ -1147,20 +1144,28 @@ class FileTaskService(TaskBase):
         if file_service.file_exists(root_task_file):
             context = file_service.read_file(root_task_file)
         else:
+            root_task_name = config.get("tasks.root_task_name", "Root Task")
             # 如果根任务文件不存在，使用默认模板作为 context
             context = FILE_TASK_TEMPLATE.format(
-                name="Root Task",
-                description="This is the root task for the project."
+                name=root_task_name,
+                description=""
             )
-            # 创建目录结构
+            # 创建目录结构 ? create_directory 反复 create 是否会异常？
             file_service.create_directory(tasks_dir)
             archived_dir = config.get("tasks.archived_dir", "archived")
             file_service.create_directory(archived_dir)
-            # 写入根任务文件
+            # 写入根任务文件, 此处为自动初始化，单独一次提交。 不启用事务（内部自动启用事务）
             file_service.write_file(root_task_file, context)
         
         # 创建根任务实例（使用组合而不是继承）
         self.root_task = FileTaskImpl(file_service, self.numbering_service, root_task_id, context)
+
+        # TODO: 当前的进度
+        # 需要创建 TaskFocus 组件，用于记录。 这里的提供的调用只有一个 focus 即当前关注那个 task 
+        # 文件格式为 file_task_id , 一行一个
+        # 如果是关注的是 inline task 则 file_task_id / inline_task_id 
+        # 如果针对 inline_task 尝试 添加 task ，则 自动转为 file_task 
+
     
     def new_task(self, task_msg: str, task_prefix: Optional[str] = None) -> Optional[FileTaskMut]:
         """Create a new file task.
