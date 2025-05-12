@@ -98,6 +98,9 @@ class EditSessionOT(EditSession):
         # Record the operation
         self.operations.append(operation)
         self.last_modified = time.time()
+        
+        # 增加修改计数
+        self._edit_count += 1
     
     def insert(self, position: int, text: str) -> EditOperation:
         """Insert text at the specified position.

@@ -42,8 +42,14 @@ class EditSession(ABC):
         self.original_content = content
         self.current_content = content
         self._session_id = session_id if session_id is not None else str(uuid.uuid4())
+        self._edit_count = 0  # 初始化修改计数为0
         self.created_at = time.time()
         self.last_modified = self.created_at
+        
+    @property
+    def edit_count(self) -> int:
+        """获取当前修改计数"""
+        return self._edit_count
     
     @property
     def session_id(self):

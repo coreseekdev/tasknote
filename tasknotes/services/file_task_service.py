@@ -65,6 +65,10 @@ class TaskBase:
         # 获取任务目录配置
         self.tasks_dir = config.get("tasks.active_dir", "tasks")
         self.archived_dir = config.get("tasks.archived_dir", "archived")
+        
+        # 初始化编辑状态相关属性
+        self._creation_edit_count = 0  # 创建时的编辑计数
+        self._edit_session = None  # 关联的编辑会话
 
     def find_task_file_path(self, task_file: str) -> Optional[str]:
         """查找任务文件路径
@@ -95,48 +99,72 @@ class TaskBase:
 class InlineTaskImpl(TaskBase):
     """Implementation of InlineTask and InlineTaskMut interfaces."""
     
-    def __init__(self, file_service: FileService, numbering_service: NumberingService,
-                 edit_session: EditSession, list_item: 'ListItem'):
-        """Initialize an InlineTaskImpl instance.
+    def __init__(self, file_service: FileService, numbering_service: NumberingService, 
+                 edit_session: EditSession, list_item: ListItem):
+        """Initialize InlineTaskImpl.
         
         Args:
             file_service: The file service to use for storage operations
             numbering_service: The numbering service to use for generating task IDs
-            edit_session: The edit session to use for modifying the task
-            list_item: The ListItem object representing this task in the markdown
+            edit_session: The edit session for the parent task
+            list_item: The list item representing this task
         """
-        from tasknotes.core.markdown import parse_task_inline_string
-        
-        # 初始化基类
-        TaskBase.__init__(self, file_service, numbering_service)
-        
-        self._edit_session = edit_session
+        super().__init__(file_service, numbering_service)
+        # 设置编辑会话并记录当前编辑计数
+        self._edit_session = None
+        self._creation_edit_count = 0
+        self._set_edit_session(edit_session)
         self.list_item = list_item
         
-        # Parse the list item text to extract task ID, link, and text
-        parsed_result = parse_task_inline_string(list_item.text)
+        # 解析列表项文本，提取任务ID和消息
+        parsed_result = self._parse_list_item_text(list_item.text)
         self._task_id = parsed_result.get('task_id', None) or "task_id"
         self._task_link = parsed_result.get('link', None)
         self._task_message = parsed_result.get('text', list_item.text)
 
         # list_item 中并没有 [ ] 或 [X] 
+        self._is_done = False
         if list_item.is_task:
             # 当 is_task 时， is_completed_task 永不为 None
             self._is_done = list_item.is_completed_task 
         
-        # 缓存相关的 FileTask, 对于 “真正的”(task 不是 link 的 ) Inline Task 永远为 None
+        # 缓存相关的 FileTask, 对于 "真正的"(task 不是 link 的 ) Inline Task 永远为 None
         self._related_file_task_cache = None
     
     @property
     def task_id(self) -> str:
         """Get the task ID."""
+        # task_id 即使在过期状态下也可以访问
         return self._task_id
     
     @property
     def task_message(self) -> str:
         """获取任务消息内容"""
+        if self.is_outofdate():
+            raise ValueError("Task is out of date, only task_id is accessible")
         return self._task_message
+    
+    @property
+    def edit_status(self) -> TaskEditStatus:
+        """获取任务编辑状态"""
+        if not self._edit_session:
+            return TaskEditStatus.CLEAN
+            
+        if self._edit_session.edit_count > self._creation_edit_count:
+            return TaskEditStatus.OUTOFDATE
+            
+        return TaskEditStatus.CLEAN
         
+    def is_outofdate(self) -> bool:
+        """检查任务是否过期"""
+        return self.edit_status == TaskEditStatus.OUTOFDATE
+
+    def _set_edit_session(self, edit_session: Optional[EditSession]) -> None:
+        """设置关联的编辑会话并记录当前编辑计数"""
+        self._edit_session = edit_session
+        if edit_session:
+            self._creation_edit_count = edit_session.edit_count
+
     def get_related_file_task(self) -> Optional['FileTask']:
         """
         返回当前内联任务关联的 FileTask，如果存在。
@@ -152,7 +180,12 @@ class InlineTaskImpl(TaskBase):
             
         Raises:
             NotImplementedError: 如果链接无效或文件不存在
+            ValueError: 如果任务已过期
         """
+        # 检查任务是否过期
+        if self.is_outofdate():
+            raise ValueError("Task is out of date, only task_id is accessible")
+            
         # 如果已经有缓存，直接返回
         if self._related_file_task_cache:
             return self._related_file_task_cache
@@ -206,7 +239,12 @@ class InlineTaskImpl(TaskBase):
             
         Raises:
             NotImplementedError: 如果无法转换任务
+            ValueError: 如果任务已过期
         """
+        # 检查任务是否过期
+        if self.is_outofdate():
+            raise ValueError("Cannot convert an out-of-date task")
+            
         # 1. 检查是否已经有关联的 FileTask
         related_task = self.get_related_file_task()
         if related_task:
@@ -244,29 +282,48 @@ class InlineTaskImpl(TaskBase):
         # 3. 更新当前任务文本，添加链接
         new_text = f"[{task_id}]({task_id}.md): {self.task_message}"
         start_pos, end_pos = self.list_item.inline_item_text_range
+        # 编辑操作 会自动调用 apply ，即 更新 edit_coutn
         self._edit_session.replace(start_pos, end_pos, new_text)
         
-        # 4. 更新缓存
+        # 4. 更新缓存， 其实不必要，此时已经 out of date
         self._task_link = f"{self.task_id}.md"
         self._related_file_task_cache = file_task
         
         return file_task
 
+    def _change_task_marker(self, target_marker:str , new_marker: str) -> bool:
+        assert len(new_marker) == len(target_marker)
+        # 获取任务文本范围
+        text_range_begin, _ = self.list_item.text_range
+        inline_begin, _ = self.list_item.inline_item_text_range
+        
+        # 获取完整的任务文本（包括标记）
+        marker_text = self.list_item.text[:inline_begin-text_range_begin]
+        
+        # 替换标记部分，将 [ ] 替换为 [x]
+        if target_marker in marker_text:
+            marker_text = marker_text.replace(target_marker, new_marker, 1)
+            # 直接替换编辑会话中的内容
+            self._edit_session.replace(text_range_begin, inline_begin, marker_text)
+            return True
+        return False
+
     def mark_as_done(self) -> bool:
         """将任务标记为已完成。"""
+
+        # 注意： 目前的实现 不考虑 级联标记完成， 不考虑额外修改 file task
+        # 如果需要 同步更新，需要发送新的通知。当前版本先保证基本功能可用
+
+        # 检查任务是否过期
+        if self.is_outofdate():
+            raise ValueError("Cannot modify an out-of-date task")
+        
         # 检查当前状态，如果已经是完成状态，不需要修改
         if self._is_done:
             return True
-            
-        # 获取当前任务文本
-        current_text = self.list_item.text
         
-        # 替换 "[ ]" 为 "[x]"
-        if "[ ]" in current_text:
-            new_text = current_text.replace("[ ]", "[x]")
-            self._edit_session.apply_operation(EditOperation.REPLACE, 
-                                              self.list_item, 
-                                              {"text": new_text})
+        if self._change_task_marker("[ ]", "[X]"):            
+            # 更新任务状态
             self._is_done = True
             return True
         
@@ -274,26 +331,16 @@ class InlineTaskImpl(TaskBase):
     
     def mark_as_undone(self) -> bool:
         """将任务标记为未完成。"""
-        # 检查当前状态，如果已经是未完成状态，不需要修改
-        if not self._is_done:
-            return True
-            
-        # 获取当前任务文本
-        current_text = self.list_item.text
+        # 检查任务是否过期
+        if self.is_outofdate():
+            raise ValueError("Cannot modify an out-of-date task")
         
-        # 替换 "[x]" 或 "[X]" 为 "[ ]"
-        if "[x]" in current_text:
-            new_text = current_text.replace("[x]", "[ ]")
-            self._edit_session.apply_operation(EditOperation.REPLACE, 
-                                              self.list_item, 
-                                              {"text": new_text})
-            self._is_done = False
+        # 检查当前状态，如果已经是完成状态，不需要修改
+        if self._is_done == False:
             return True
-        elif "[X]" in current_text:
-            new_text = current_text.replace("[X]", "[ ]")
-            self._edit_session.apply_operation(EditOperation.REPLACE, 
-                                              self.list_item, 
-                                              {"text": new_text})
+        
+        if self._change_task_marker("[X]", "[ ]"):            
+            # 更新任务状态
             self._is_done = False
             return True
         
@@ -301,31 +348,38 @@ class InlineTaskImpl(TaskBase):
     
     def delete(self, force: bool = False) -> bool:
         """删除任务。"""
-        # 从父列表中删除此列表项
-        parent_list = self.list_item.parent
-        if parent_list:
-            self._edit_session.apply_operation(EditOperation.DELETE, self.list_item)
-            return True
+        # 检查任务是否过期
+        if self.is_outofdate():
+            raise ValueError("Cannot modify an out-of-date task")
         
-        return False
-    
+        # 在当前的处理中，简单的从 文件删除对应的 Task 文本
+        # 1. task file 可能出现在多个子列表中，不能立即删除
+        # 2. 后续的处理中，考虑先广播一遍删除请求，以便其他 task 可以取消掉
+        text_begin, text_end  = self.list_item.text_range
+        self._edit_session.replace(text_begin, text_end, "")
+        return True
+
     def modify_task(self, task_msg: str) -> bool:
         """更新任务描述或标题。"""
-        # 获取当前任务文本
-        current_text = self.list_item.text
+        # 检查任务是否过期
+        if self.is_outofdate():
+            raise ValueError("Cannot modify an out-of-date task")
+
+        # 获取任务文本范围
+        inline_begin, inline_end = self.list_item.inline_item_text_range
         
-        # 如果有链接，保留链接部分，更新描述部分
+        # 构造新的任务文本
         if self._task_link:
-            # 创建新的任务文本，保留链接
-            new_text = f"[{task_msg}]({self._task_link})"
+            # 如果有链接，保留链接格式
+            new_text = f"[{self.task_id}]({self._task_link}): {task_msg}"
         else:
-            # 直接替换文本
-            new_text = task_msg
+            # 如果没有链接，保留 task_id
+            new_text = f"{self.task_id}: {task_msg}"
         
-        # 应用更改
-        self._edit_session.apply_operation(EditOperation.REPLACE, 
-                                          self.list_item, 
-                                          {"text": new_text})
+        if new_text != self.list_item.text:
+            # 替换内联文本部分，保留标记部分
+            self._edit_session.replace(inline_begin, inline_end, new_text)
+            return False # 此处的返回值语义不清晰，应该是没有改变，而非改变失败
         
         # 更新任务消息
         self._task_message = task_msg
@@ -334,62 +388,137 @@ class InlineTaskImpl(TaskBase):
     
     def get_tags(self) -> List[str]:
         """获取与此任务关联的标签列表。"""
-        # 从任务文本中提取标签
         tags = []
-        text = self.task_message
         
-        # 查找形如 #tag 的标签
-        tag_pattern = r'#([\w-]+)'
-        matches = re.findall(tag_pattern, text)
-        if matches:
-            tags.extend(matches)
+        # 检查任务是否过期
+        if self.is_outofdate():
+            raise ValueError("Cannot modify an out-of-date task")
+
+        # 获取嵌套列表
+        nested_lists = list(self.list_item.get_lists())
+        if not nested_lists or len(nested_lists) == 0:
+            # [不实现] 如果没有嵌套列表，则从任务消息中提取标签
+            # 不能将 tag nested 在 task_message 中，这导致修改异常复杂
+            # 可以配置选项， tag 是否附加显示在 任务中
+            # 如果是看板视图，可以在 task-id 后显示部分 tag 
+            return tags   # 即 tag 为空
+        
+        # 使用第一个嵌套列表中的所有条目作为标签
+        first_list = nested_lists[0]
+        for tag_item in first_list.list_items():
+            # 每个列表项的文本就是一个标签
+            tag_text = tag_item.text.strip()
+            if tag_text:
+                # 移除可能的 '#' 前缀
+                if tag_text.startswith('#'):
+                    tag_text = tag_text[1:].strip()
+                tags.append(tag_text)
         
         return tags
     
     def set_tags(self, tags: List[str]) -> bool:
         """设置与此任务关联的标签列表。"""
-        # 获取当前任务文本
-        current_text = self.task_message
+        # 检查任务是否过期
+        if self.is_outofdate():
+            raise ValueError("Cannot modify an out-of-date task")
         
-        # 移除所有现有标签
-        tag_pattern = r'#[\w-]+'  
-        clean_text = re.sub(tag_pattern, '', current_text).strip()
+        # 获取当前的 tags
+        current_tags = self.get_tags()
+        current_tags_set = set(current_tags)
+        new_tags_set = set(tags)
         
-        # 添加新标签
-        if tags:
-            tag_text = ' ' + ' '.join([f'#{tag}' for tag in tags])
-            new_text = clean_text + tag_text
+        # 如果标签没有变化，直接返回
+        if current_tags_set == new_tags_set:
+            return True
+
+        # 获取嵌套列表
+        nested_lists = list(self.list_item.get_lists())
+        
+        # 获取任务文本范围
+        text_range_begin, text_range_end = self.list_item.text_range
+        
+        # 获取当前行的缩进前缀
+        current_content = self._edit_session.current_content
+        line_start = current_content.rfind('\n', 0, text_range_begin) + 1
+        prefix = current_content[line_start:text_range_begin]
+        # 不必 额外加工 preifx ，这个就是 list item - 之前的空格（prefix)
+        
+        # 子列表的缩进前缀应该比父列表多一级
+        sub_list_prefix = prefix + "  "
+        
+        if not nested_lists or len(nested_lists) == 0:
+            # 目前不存在嵌套列表，需要创建一个
+            if not tags or len(tags) == 0:
+                # 如果没有标签要设置，直接返回
+                return True
+                
+            # 构造标签列表内容
+            tag_list_content = "\n"
+            for tag in tags:
+                tag_list_content += f"{sub_list_prefix}- {tag}\n"
+            
+            # 在任务文本结束后插入标签列表
+            self._edit_session.insert(text_range_end-1, tag_list_content)
+            
         else:
-            new_text = clean_text
+            # 已经存在嵌套列表，更新它
+            tag_list = nested_lists[0]
+            list_range_begin, list_range_end = tag_list.text_range
+            
+            # 获取标签列表的缩进前缀
+            list_line_start = current_content.rfind('\n', 0, list_range_begin) + 1
+            list_prefix = current_content[list_line_start:list_range_begin]
+
+            # 构造新的标签列表内容
+            new_list_content = ""
+            for tag in tags:
+                new_list_content += f"{list_prefix}- {tag}\n"
+            
+            # 如果没有标签，则删除整个列表
+            if not tags or len(tags) == 0:
+                # 删除列表，包括可能的前导空行
+                list_start = current_content.rfind('\n', 0, list_range_begin)
+                if list_start != -1:
+                    list_range_begin = list_start
+                self._edit_session.replace(list_range_begin, list_range_end, "")
+            else:
+                # 替换整个列表内容，去除最后一个\n以避免多余的空行
+                if new_list_content.endswith('\n'):
+                    new_list_content = new_list_content[:-1]
+                self._edit_session.replace(list_range_begin, list_range_end, new_list_content)
         
-        # 应用修改
-        return self.modify_task(new_text)
+        return True
 
 
 class FileTaskImpl(TaskBase):
-    """Implementation of FileTask and FileTaskMut interfaces."""
+    """实现 FileTask 和 FileTaskMut 接口。"""
     
-    def __init__(self, file_service: FileService, numbering_service: NumberingService,
-                 task_id: str, context: str):
+    def __init__(self, file_service: FileService, numbering_service: NumberingService, 
+                 task_id: str, context: str, edit_session: Optional[EditSession] = None):
         """Initialize a FileTaskImpl instance.
         
         Args:
             file_service: The file service to use for storage operations
             numbering_service: The numbering service to use for generating task IDs
-            task_id: ID of the task
-            context: The content of the task file
+            task_id: The ID of this task
+            context: The full markdown content of the task file
+            edit_session: Optional edit session for the task content
         """
-        # 初始化基类
-        TaskBase.__init__(self, file_service, numbering_service)
-        
+        super().__init__(file_service, numbering_service)
+
         self._task_id = task_id
         self._context = context
-        self._markdown_service = None
         self._parse_cache = None
         self._is_archived = False
         
         # 文件名，对于新建的文件，不同通过文件系统检测来判断，需要主动设置
         self._task_file = None
+        
+        # 设置编辑会话并记录当前编辑计数, 如果此时为 None ，会在 get_edit_session 时自动创建
+        # 新创建的 edit_session edit_count 默认为 0
+        self._edit_session = None
+        self._creation_edit_count = 0
+        self._set_edit_session(edit_session)
         
         # 检查任务是否已归档
         file_name = f"{task_id}.md"
@@ -400,7 +529,15 @@ class FileTaskImpl(TaskBase):
     @property
     def task_id(self) -> str:
         """Get the task ID."""
+        # task_id 即使在过期状态下也可以访问
         return self._task_id
+    
+    @property
+    def context(self) -> str:
+        """Get the full context of the task."""
+        if self.is_outofdate():
+            raise ValueError("Task is out of date, only task_id is accessible")
+        return self._context
     
     @property
     def task_message(self) -> str:
@@ -408,6 +545,9 @@ class FileTaskImpl(TaskBase):
         
         返回第一个 level 1 的标题文本。如果没有 level 1 标题，则返回空字符串。
         """
+        if self.is_outofdate():
+            raise ValueError("Task is out of date, only task_id is accessible")
+            
         # 解析标记文本
         headers = list(self.get_headers())
         
@@ -418,6 +558,27 @@ class FileTaskImpl(TaskBase):
         
         return ""
     
+    @property
+    def edit_status(self) -> TaskEditStatus:
+        """获取任务编辑状态"""
+        if not self._edit_session:
+            return TaskEditStatus.CLEAN
+            
+        if self._edit_session.edit_count > self._creation_edit_count:
+            return TaskEditStatus.OUTOFDATE
+            
+        return TaskEditStatus.CLEAN
+        
+    def is_outofdate(self) -> bool:
+        """检查任务是否过期"""
+        return self.edit_status == TaskEditStatus.OUTOFDATE
+
+    def _set_edit_session(self, edit_session: Optional[EditSession]) -> None:
+        """设置关联的编辑会话并记录当前编辑计数"""
+        self._edit_session = edit_session
+        if edit_session:
+            self._creation_edit_count = edit_session.edit_count
+
     def set_filename(self, filename: str) -> 'FileTaskImpl':
         # 主动设置 文件名，避免自动检测
         self._task_file = filename

@@ -7,12 +7,20 @@ It provides a unified model where projects are special cases of tasks.
 This module uses Protocol for interface definitions, separating read-only and mutable operations.
 """
 
-from enum import Enum
+from enum import Enum, auto
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Any, Set, Protocol, runtime_checkable, TypeVar
 
 from tasknotes.interface.file_service import FileService
 from tasknotes.interface.numbering_service import NumberingService
+
+
+# 注意：不要在此处添加 TaskStatus 枚举 
+
+class TaskEditStatus(Enum):
+    """任务编辑状态"""
+    CLEAN = auto()      # 任务与源文件/编辑会话同步
+    OUTOFDATE = auto()  # 任务已过期，需要重新加载
 
 
 # 只读任务接口
@@ -28,6 +36,11 @@ class Task(Protocol):
     def task_id(self) -> str:
         """获取任务ID"""
 
+        ...
+
+    @property
+    def edit_status(self) -> 'TaskEditStatus':
+        """获取任务编辑状态"""
         ...
 
     @property
