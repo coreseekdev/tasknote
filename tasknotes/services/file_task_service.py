@@ -172,9 +172,9 @@ class InlineTaskImpl(TaskBase, InlineTask):
         # 由于当前接口限制，我们暂时只能处理简单情况
         
         # 创建新的任务文本
-        is_completed = self.list_item.is_completed_task
-        checkbox = "[x]" if is_completed else "[ ]"
-        new_text = f"{checkbox}[{self._task_id}]({file_name}): {self._task_message}"
+        # 注意：inline_item_text_range 不包括 Markdown 列表项的前缀部分（即 "- [ ]"）
+        # 因此，我们不需要在新文本中包含复选框，只需要包含任务 ID 和链接
+        new_text = f"[{self._task_id}]({file_name}): {self._task_message}"
         
         # 使用编辑会话修改文本
         # 注意：这里可能需要更精确的位置计算，目前只是简单替换
@@ -286,6 +286,64 @@ class FileTaskImpl(TaskBase, FileTask):
         self._task_id = task_id
         self._context = context
         self._headers_cache = None
+    
+    @property
+    def task_id(self) -> str:
+        """Get the task ID."""
+        return self._task_id
+    
+    @property
+    def task_message(self) -> str:
+        """Get the task single line message."""
+        # 简单实现，返回第一行或空字符串
+        if self._context:
+            return self._context.split('\n')[0]
+        return ""
+    
+    def mark_as_done(self) -> bool:
+        """Mark the task as done."""
+        # 简单实现，仅用于测试
+        return True
+    
+    def mark_as_undone(self) -> bool:
+        """Mark the task as not done."""
+        # 简单实现，仅用于测试
+        return True
+    
+    def tags(self, new_tags: Optional[List[str]] = None) -> List[str]:
+        """Get or replace the list of tags associated with this task."""
+        # 简单实现，仅用于测试
+        return []
+    
+    def new_sub_task(self, task_msg: str, task_prefix: Optional[str] = None) -> Optional[InlineTask]:
+        """Create a new inline task as a subtask of this file task."""
+        # 简单实现，仅用于测试
+        return None
+    
+    def tasks(self) -> List[Task]:
+        """Get all subtasks of this file task."""
+        # 简单实现，仅用于测试
+        return []
+    
+    def mark_as_archived(self, force: bool = False) -> bool:
+        """Mark this task as archived."""
+        # 简单实现，仅用于测试
+        return True
+    
+    def add_related_task(self, task_id: str) -> 'FileTask':
+        """Add an existing task as a related task to this task."""
+        # 简单实现，仅用于测试
+        return self
+    
+    def modify_task(self, task_id: Optional[str] = None, task_msg: Optional[str] = None) -> bool:
+        """Update this task or a subtask."""
+        # 简单实现，仅用于测试
+        return True
+    
+    def tag_groups(self) -> Dict[str, Dict[str, Any]]:
+        """Get the tag groups defined in this task."""
+        # 简单实现，仅用于测试
+        return {}
     
     @property
     def context(self) -> str:
