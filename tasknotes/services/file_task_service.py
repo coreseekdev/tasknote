@@ -620,8 +620,20 @@ class FileTaskImpl(TaskBase, FileTask):
         raise NotImplementedError("tag_groups not implemented")
 
 
-class FileTaskService(FileTaskImpl, TaskService):
-    """Implementation of TaskService interface that uses FileService for storage."""
+class FileTaskService(TaskBase):
+    """Task service implementation.
+    
+    This service manages tasks stored in files.
+    
+    提供事务支持，可以将多个任务操作合并为一次提交。
+    使用方式：
+    ```python
+    with task_service.transaction("提交消息") as tx:
+        task1 = tx.new_task("任务1")
+        task2 = tx.new_task("任务2")
+        # 所有操作将在 with 块结束时一起提交
+    ```
+    """
     
     def __init__(self, file_service: FileService, numbering_service: Optional[NumberingService] = None):
         """Initialize a FileTaskService instance.
@@ -630,9 +642,12 @@ class FileTaskService(FileTaskImpl, TaskService):
             file_service: The file service to use for storage operations
             numbering_service: Optional numbering service for task IDs
         """
-        # 获取任务目录配置
-        self.tasks_dir = config.get("tasks.active_dir", "tasks")
-        self.archived_dir = config.get("tasks.archived_dir", "archived")
+        # 如果未提供编号服务，则创建一个
+        if numbering_service is None:
+            numbering_service = TaskNumberingService(file_service)
+        
+        # 初始化基类，它会设置 file_service、numbering_service 和目录配置
+        super().__init__(file_service, numbering_service)
         
         # 确保任务目录存在
         if not file_service.file_exists(self.tasks_dir):
@@ -641,11 +656,7 @@ class FileTaskService(FileTaskImpl, TaskService):
         if not file_service.file_exists(self.archived_dir):
             file_service.create_directory(self.archived_dir)
         
-        # 如果未提供编号服务，则创建一个
-        if numbering_service is None:
-            numbering_service = TaskNumberingService(file_service)
-        
-        # 从numbering service获取默认前缀
+        # 从 numbering service 获取默认前缀
         default_prefix = numbering_service.get_default_prefix()
         task_id = f"{default_prefix}-000"
         
@@ -656,16 +667,14 @@ class FileTaskService(FileTaskImpl, TaskService):
             context = file_service.read_file(root_task_path)
         else:
             # 否则使用默认模板
-            context = FILE_TASK_TEMPLATE.format(name="Root Task", description="")
+            root_task_name = config.get("tasks.root_task_name", "Root Task")
+            context = FILE_TASK_TEMPLATE.format(name=root_task_name, description="")
         
-        # 初始化基类
-        super().__init__(file_service, numbering_service, task_id, context)
+        # 创建根任务实例
+        self.root_task = FileTaskImpl(file_service, numbering_service, task_id, context)
     
     def new_task(self, task_msg: str, task_prefix: Optional[str] = None) -> FileTask:
         """Create a new file task.
-        
-        This implementation overrides the standard FileTask.new_task method to return
-        a FileTask instead of an InlineTask.
         
         Args:
             task_msg: Description of the task
@@ -674,35 +683,31 @@ class FileTaskService(FileTaskImpl, TaskService):
         Returns:
             FileTask: The newly created file task
         """
-        # 1. 获取任务ID
-        if task_prefix is None:
-            task_prefix = self.numbering_service.get_default_prefix()
-            
-        task_id = self.numbering_service.get_next_number(task_prefix)
-        
-        # 2. 直接使用 self 作为根任务实例添加内联任务
+        # 1. 使用根任务实例添加内联任务
         # 使用 new_sub_task 方法添加子任务
-        inline_task = self.new_sub_task(task_msg, task_prefix)
+        inline_task = self.root_task.new_sub_task(task_msg, task_prefix)
         
         # 如果内联任务创建失败，返回 None
         if inline_task is None:
             return None
         
-        # 3. 创建任务内容
-        task_content = FILE_TASK_TEMPLATE.format(
-            name=task_msg.split('\n')[0] if '\n' in task_msg else task_msg,
-            description=task_msg if '\n' in task_msg else ""
-        )
+        # 2. 使用 convert_task 方法将内联任务转换为文件任务
+        # 这样可以统一任务创建的逻辑，确保所有任务都通过相同的方式创建
+        file_task = inline_task.convert_task()
         
-        # 4. 使用文件服务创建新任务文件
-        task_path = os.path.join(self.tasks_dir, f"{task_id}.md")
-        
-        # 创建新任务文件
-        self.file_service.write_file(task_path, task_content)
-        
-        # 5. 创建并返回新的 FileTask 实例
-        return FileTaskImpl(self.file_service, self.numbering_service, task_id, task_content)
+        return file_task
 
+    def transaction(self, commit_message: str = "") -> 'TaskTransaction':
+        """创建一个新的任务事务。
+        
+        Args:
+            commit_message: 提交消息
+            
+        Returns:
+            TaskTransaction: 新创建的事务对象
+        """
+        return TaskTransaction(self, commit_message)
+    
     def list_tasks(self, include_archived: bool = False) -> List[Dict[str, Any]]:
         """List all tasks managed by this service."""
         raise NotImplementedError("list_tasks not implemented")
@@ -710,6 +715,92 @@ class FileTaskService(FileTaskImpl, TaskService):
     def get_task(self, task_id: str) -> Optional[FileTask]:
         """Get a specific task by ID."""
         raise NotImplementedError("get_task not implemented")
+
+
+class TaskTransaction:
+    """任务事务类，用于支持批量操作任务。
+    
+    该类实现了上下文管理器协议，可以在 with 语句中使用。
+    所有在事务中执行的操作将在事务结束时一次性提交。
+    
+    使用示例：
+    ```python
+    with task_service.transaction("批量创建任务") as tx:
+        task1 = tx.new_task("任务1")
+        task2 = tx.new_task("任务2")
+        # 所有操作将在 with 块结束时一起提交
+    ```
+    """
+    
+    def __init__(self, task_service: FileTaskService, commit_message: str = ""):
+        """初始化任务事务。
+        
+        Args:
+            task_service: 任务服务实例
+            commit_message: 提交消息
+        """
+        self.task_service = task_service
+        self.commit_message = commit_message
+        self.file_transaction = None  # 将在 __enter__ 中初始化
+    
+    def __enter__(self) -> 'TaskTransaction':
+        """进入事务上下文。
+        
+        创建一个文件服务事务，所有文件操作将在事务中执行。
+        
+        Returns:
+            TaskTransaction: 事务对象自身
+        """
+        # 创建文件服务事务
+        self.file_transaction = self.task_service.file_service.transaction(self.commit_message)
+        self.file_transaction.__enter__()
+        
+        # 替换任务服务中的文件服务，使其使用事务中的文件服务
+        self._original_file_service = self.task_service.file_service
+        self.task_service.file_service = self.file_transaction
+        
+        # 同时替换根任务中的文件服务
+        self._original_root_task_file_service = self.task_service.root_task.file_service
+        self.task_service.root_task.file_service = self.file_transaction
+        
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        """退出事务上下文。
+        
+        如果没有异常发生，提交所有更改；否则回滚更改。
+        
+        Args:
+            exc_type: 异常类型
+            exc_val: 异常值
+            exc_tb: 异常回溯
+            
+        Returns:
+            bool: 是否抑制异常
+        """
+        # 恢复原始文件服务
+        self.task_service.file_service = self._original_file_service
+        
+        # 恢复根任务的文件服务
+        self.task_service.root_task.file_service = self._original_root_task_file_service
+        
+        # 退出文件服务事务
+        result = self.file_transaction.__exit__(exc_type, exc_val, exc_tb)
+        self.file_transaction = None
+        
+        return result
+    
+    def new_task(self, task_msg: str, task_prefix: Optional[str] = None) -> FileTask:
+        """在事务中创建新任务。
+        
+        Args:
+            task_msg: 任务描述
+            task_prefix: 可选的任务前缀
+            
+        Returns:
+            FileTask: 新创建的文件任务
+        """
+        return self.task_service.new_task(task_msg, task_prefix)
     
     def archive_task(self, task_id: str) -> bool:
         """Archive a task."""
