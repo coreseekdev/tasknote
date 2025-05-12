@@ -14,7 +14,7 @@ from typing import Tuple, List, Optional, Dict, Any
 # 添加项目根目录到 Python 路径
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
-from tasknotes.interface.task import FileTask, InlineTask, Task
+from tasknotes.interface.task import FileTask, FileTaskMut, InlineTask, InlineTaskMut, Task, TaskMut
 from tasknotes.interface.file_service import FileService
 from tasknotes.interface.edit_session import EditSession
 from tasknotes.interface.markdown_service import ListItem, ListBlock, MarkdownService
@@ -42,15 +42,14 @@ class TestFileTaskService(unittest.TestCase):
         # 创建 FileTaskService 实例
         self.task_service = FileTaskService(self.file_service, self.numbering_service)
         
-        # 模拟 FileTaskService.new_sub_task 方法
-        self.original_new_sub_task = self.task_service.new_sub_task
-        self.task_service.new_sub_task = MagicMock()
+        # 模拟 root_task.new_sub_task 方法
+        self.mock_root_task = MagicMock(spec=FileTaskMut)
+        self.task_service.root_task = self.mock_root_task
         
     def tearDown(self):
         """清理测试环境"""
-        # 恢复原始方法
-        if hasattr(self, 'original_new_sub_task'):
-            self.task_service.new_sub_task = self.original_new_sub_task
+        # 清理模拟对象
+        pass
     
     def test_new_task(self):
         """测试 new_task 方法，验证其使用 convert_task 创建新任务"""
@@ -58,14 +57,14 @@ class TestFileTaskService(unittest.TestCase):
         task_msg = "Test Task"
         task_id = "TASK-001"
         
-        # 创建模拟的 InlineTask 实例
-        mock_inline_task = MagicMock(spec=InlineTask)
-        mock_file_task = MagicMock(spec=FileTask)
+        # 创建模拟的 InlineTaskMut 实例
+        mock_inline_task = MagicMock(spec=InlineTaskMut)
+        mock_file_task = MagicMock(spec=FileTaskMut)
         
-        # 设置 new_sub_task 方法返回模拟的 InlineTask
-        self.task_service.new_sub_task.return_value = mock_inline_task
+        # 设置 root_task.new_sub_task 方法返回模拟的 InlineTaskMut
+        self.mock_root_task.new_sub_task.return_value = mock_inline_task
         
-        # 设置 convert_task 方法返回模拟的 FileTask
+        # 设置 convert_task 方法返回模拟的 FileTaskMut
         mock_inline_task.convert_task.return_value = mock_file_task
         
         # 调用被测试的方法
@@ -75,7 +74,7 @@ class TestFileTaskService(unittest.TestCase):
         self.assertEqual(result, mock_file_task)
         
         # 验证方法调用
-        self.task_service.new_sub_task.assert_called_once_with(task_msg, None)
+        self.mock_root_task.new_sub_task.assert_called_once_with(task_msg, None)
         mock_inline_task.convert_task.assert_called_once()
     
     def test_new_task_with_prefix(self):
@@ -84,14 +83,14 @@ class TestFileTaskService(unittest.TestCase):
         task_msg = "Test Task"
         task_prefix = "PROJ"
         
-        # 创建模拟的 InlineTask 实例
-        mock_inline_task = MagicMock(spec=InlineTask)
-        mock_file_task = MagicMock(spec=FileTask)
+        # 创建模拟的 InlineTaskMut 实例
+        mock_inline_task = MagicMock(spec=InlineTaskMut)
+        mock_file_task = MagicMock(spec=FileTaskMut)
         
-        # 设置 new_sub_task 方法返回模拟的 InlineTask
-        self.task_service.new_sub_task.return_value = mock_inline_task
+        # 设置 root_task.new_sub_task 方法返回模拟的 InlineTaskMut
+        self.mock_root_task.new_sub_task.return_value = mock_inline_task
         
-        # 设置 convert_task 方法返回模拟的 FileTask
+        # 设置 convert_task 方法返回模拟的 FileTaskMut
         mock_inline_task.convert_task.return_value = mock_file_task
         
         # 调用被测试的方法
@@ -101,16 +100,16 @@ class TestFileTaskService(unittest.TestCase):
         self.assertEqual(result, mock_file_task)
         
         # 验证方法调用
-        self.task_service.new_sub_task.assert_called_once_with(task_msg, task_prefix)
+        self.mock_root_task.new_sub_task.assert_called_once_with(task_msg, task_prefix)
         mock_inline_task.convert_task.assert_called_once()
     
     def test_new_task_failure(self):
-        """测试 new_task 方法在 new_sub_task 返回 None 时的行为"""
+        """测试 new_task 方法在 root_task.new_sub_task 返回 None 时的行为"""
         # 准备测试数据
         task_msg = "Test Task"
         
-        # 设置 new_sub_task 方法返回 None
-        self.task_service.new_sub_task.return_value = None
+        # 设置 root_task.new_sub_task 方法返回 None
+        self.mock_root_task.new_sub_task.return_value = None
         
         # 调用被测试的方法
         result = self.task_service.new_task(task_msg)
@@ -119,7 +118,7 @@ class TestFileTaskService(unittest.TestCase):
         self.assertIsNone(result)
         
         # 验证方法调用
-        self.task_service.new_sub_task.assert_called_once_with(task_msg, None)
+        self.mock_root_task.new_sub_task.assert_called_once_with(task_msg, None)
 
 
 if __name__ == "__main__":

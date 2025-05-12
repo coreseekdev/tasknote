@@ -3,329 +3,516 @@ Task and Project Interface for TaskNotes.
 
 This module defines the interfaces for managing tasks and projects in TaskNotes.
 It provides a unified model where projects are special cases of tasks.
+
+This module uses Protocol for interface definitions, separating read-only and mutable operations.
 """
 
-from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional, Union, Any, Set
+from typing import Dict, List, Optional, Union, Any, Set, Protocol, runtime_checkable, TypeVar
 
 from tasknotes.interface.file_service import FileService
 from tasknotes.interface.numbering_service import NumberingService
 
-class Task(ABC):
+
+# 只读任务接口
+@runtime_checkable
+class Task(Protocol):
     """
-    Abstract base class for all types of tasks.
+    只读任务接口。
     
-    This class defines the common interface that all task implementations must provide.
+    定义了所有任务类型的共同只读操作。
     """
-    
-    @property
-    @abstractmethod
-    def task_id(self) -> str:
-        """Get the task ID."""
-        pass
 
     @property
-    @abstractmethod
+    def task_id(self) -> str:
+        """获取任务ID"""
+
+        ...
+
+    @property
     def task_message(self) -> str:
-        """Get the task single line message."""
-        pass
+        """获取任务单行消息"""
+
+        ...
     
-    @abstractmethod
+    def get_tags(self) -> List[str]:
+        """
+        获取与此任务关联的标签列表。
+        
+        Returns:
+            List[str]: 当前标签列表
+        """
+
+        ...
+    
+    def as_mutable(self) -> 'TaskMut':
+        """
+        获取此任务的可变版本。
+        
+        Returns:
+            TaskMut: 可变任务接口
+        """
+
+        ...
+
+# 可变任务接口
+@runtime_checkable
+class TaskMut(Task, Protocol):
+    """
+    可变任务接口。
+    
+    扩展了只读任务接口，添加了修改任务状态的方法。
+    """
+
     def mark_as_done(self) -> bool:
         """
-        Mark the task as done.
+        将任务标记为已完成。
         
         Returns:
-            bool: True if the operation was successful, False otherwise
+            bool: 如果操作成功则为True，否则为False
         """
-        pass
+
+        ...
     
-    @abstractmethod
     def mark_as_undone(self) -> bool:
         """
-        Mark the task as not done.
+        将任务标记为未完成。
         
         Returns:
-            bool: True if the operation was successful, False otherwise
+            bool: 如果操作成功则为True，否则为False
         """
-        pass
+
+        ...
     
-    @abstractmethod
     def delete(self, force: bool = False) -> bool:
         """
-        Delete the task.
+        删除任务。
         
         Args:
-            force: If True, force deletion even if there are dependencies
+            force: 如果为True，即使有依赖项也强制删除
             
         Returns:
-            bool: True if the operation was successful, False otherwise
+            bool: 如果操作成功则为True，否则为False
         """
-        pass
+
+        ...
     
-    @abstractmethod
     def modify_task(self, task_msg: str) -> bool:
         """
-        Update the task description or title.
+        更新任务描述或标题。
         
         Args:
-            task_msg: New description or title for the task
+            task_msg: 任务的新描述或标题
             
         Returns:
-            bool: True if the operation was successful, False otherwise
+            bool: 如果操作成功则为True，否则为False
         """
-        pass
+
+        ...
     
-    @abstractmethod
-    def tags(self, new_tags: Optional[List[str]] = None) -> List[str]:
+    def set_tags(self, tags: List[str]) -> bool:
         """
-        Get or replace the list of tags associated with this task.
+        设置与此任务关联的标签列表。
         
         Args:
-            new_tags: Optional new list of tags to associate with the task.
-                      If provided, replaces the existing tags.
+            tags: 要关联的新标签列表
             
         Returns:
-            List[str]: Current list of tags (after any updates)
+            bool: 如果操作成功则为True，否则为False
         """
-        pass
 
+        ...
 
-class InlineTask(Task):
+# 只读内联任务接口
+@runtime_checkable
+class InlineTask(Task, Protocol):
     """
-    Implementation of a task that is represented as a single line in a markdown file.
+    只读内联任务接口。
     
-    These tasks are typically part of a FileTask and don't have their own file.
+    表示为Markdown文件中的单行的任务。这些任务通常是FileTask的一部分，没有自己的文件。
     """
-    
-    @abstractmethod
-    def convert_task(self) -> 'FileTask':
-        """
-        Convert this inline task to a file task.
-        
-        Returns:
-            FileTask: The newly created file task
-        """
-        pass
 
-    @abstractmethod
     def get_related_file_task(self) -> Optional['FileTask']:
         """
-        返回当前 inline task 关联的 FileTask ，如果存在
-
-        NOTE: 当 Task 使用 link 的形式表示时，链接的 target 就是 FileTask
+        返回当前内联任务关联的FileTask，如果存在。
+        
+        当任务使用链接形式表示时，链接的目标就是FileTask。
+        
+        Returns:
+            Optional[FileTask]: 关联的文件任务，如果不存在则为None
         """
-        pass
 
+        ...
+    
+    def as_mutable(self) -> 'InlineTaskMut':
+        """
+        获取此内联任务的可变版本。
+        
+        Returns:
+            InlineTaskMut: 可变内联任务接口
+        """
 
-class FileTask(Task):
+        ...
+
+# 可变内联任务接口
+@runtime_checkable
+class InlineTaskMut(InlineTask, TaskMut, Protocol):
     """
-    Implementation of a task that is represented as a markdown file.
+    可变内联任务接口。
     
-    These tasks can contain inline tasks and other file tasks as subtasks.
+    扩展了只读内联任务接口，添加了修改内联任务的方法。
     """
+
+    def convert_task(self) -> 'FileTask':
+        """
+        将此内联任务转换为文件任务。
+        
+        Returns:
+            FileTask: 新创建的文件任务
+        """
+
+        ...
+
+# 只读文件任务接口
+@runtime_checkable
+class FileTask(Task, Protocol):
+    """
+    只读文件任务接口。
     
-    @abstractmethod
+    表示为Markdown文件的任务。这些任务可以包含内联任务和其他文件任务作为子任务。
+    """
+
+    @property
+    def context(self) -> str:
+        """
+        获取任务的完整Markdown内容。
+        
+        Returns:
+            str: 任务的Markdown内容
+        """
+
+        ...
+    
+    def get_tasks(self) -> List[Task]:
+        """
+        获取此文件任务的所有子任务。
+        
+        Returns:
+            List[Task]: 子任务列表（可以是InlineTask或FileTask）
+        """
+
+        ...
+    
+    def get_tag_groups(self) -> Dict[str, Dict[str, Any]]:
+        """
+        获取此任务中定义的标签组。
+        
+        Returns:
+            Dict[str, Dict[str, Any]]: 标签组字典，其中每个值是一个包含
+                'ordered'（bool）和'items'（List[str]）键的字典
+        """
+
+        ...
+    
+    def as_mutable(self) -> 'FileTaskMut':
+        """
+        获取此文件任务的可变版本。
+        
+        Returns:
+            FileTaskMut: 可变文件任务接口
+        """
+
+        ...
+
+# 可变文件任务接口
+@runtime_checkable
+class FileTaskMut(FileTask, TaskMut, Protocol):
+    """
+    可变文件任务接口。
+    
+    扩展了只读文件任务接口，添加了修改文件任务的方法。
+    """
+
     def __init__(self, file_service: FileService, numbering_service: NumberingService, task_id: str, context: str) -> None:
         """
-        Initialize a FileTask instance.
+        初始化FileTaskMut实例。
         
         Args:
-            file_service: The file service to use for storage operations
-            numbering_service: The numbering service to use for generating task IDs
-            task_id: The ID of the task
-            context: The markdown content of the task
+            file_service: 用于存储操作的文件服务
+            numbering_service: 用于生成任务ID的编号服务
+            task_id: 任务的ID
+            context: 任务的Markdown内容
         """
-        pass
+
+        ...
     
-    @abstractmethod
-    def new_sub_task(self, task_msg: str, task_prefix: Optional[str] = None) -> Optional[InlineTask]:
+    def new_sub_task(self, task_msg: str, task_prefix: Optional[str] = None) -> Optional[InlineTaskMut]:
         """
-        Create a new inline task as a subtask of this file task.
+        创建一个新的内联任务作为此文件任务的子任务。
         
         Args:
-            task_msg: Description of the task
-            task_prefix: Optional prefix for the task ID
+            task_msg: 任务描述
+            task_prefix: 可选的任务ID前缀
             
         Returns:
-            InlineTask: The newly created inline task
+            Optional[InlineTaskMut]: 新创建的内联任务，如果创建失败则为None
         """
-        pass
+
+        ...
     
-    @abstractmethod
-    def tasks(self) -> List[Task]:
-        """
-        Get all subtasks of this file task.
-        
-        Returns:
-            List[Task]: List of subtasks (can be InlineTask or FileTask)
-        """
-        pass
-    
-    @abstractmethod
     def delete(self, task_id: Optional[str] = None, force: bool = False) -> bool:
         """
-        Delete this task or a subtask.
+        删除此任务或子任务。
         
         Args:
-            task_id: ID of the subtask to delete, or None to delete this task
-            force: If True, force deletion even if there are dependencies
+            task_id: 要删除的子任务的ID，如果为None则删除此任务
+            force: 如果为True，即使有依赖项也强制删除
             
         Returns:
-            bool: True if the operation was successful, False otherwise
+            bool: 如果操作成功则为True，否则为False
         """
-        pass
+
+        ...
     
-    @abstractmethod
     def mark_as_archived(self, force: bool = False) -> bool:
         """
-        Mark this task as archived.
+        将此任务标记为已归档。
         
         Args:
-            force: If True, force archiving even if there are active subtasks
+            force: 如果为True，即使有活动子任务也强制归档
             
         Returns:
-            bool: True if the operation was successful, False otherwise
+            bool: 如果操作成功则为True，否则为False
         """
-        pass
+
+        ...
     
-    @abstractmethod
-    def add_related_task(self, task_id: str) -> 'FileTask':
+    def add_related_task(self, task_id: str) -> 'FileTaskMut':
         """
-        Add an existing task as a related task to this task.
+        将现有任务添加为此任务的相关任务。
         
         Args:
-            task_id: ID of the task to add as related
+            task_id: 要添加为相关任务的任务ID
             
         Returns:
-            FileTask: The related file task
+            FileTaskMut: 相关的文件任务
         """
-        pass
+
+        ...
     
-    @abstractmethod
     def modify_task(self, task_id: Optional[str] = None, task_msg: Optional[str] = None) -> bool:
         """
-        Update this task or a subtask.
+        更新此任务或子任务。
         
         Args:
-            task_id: ID of the subtask to update, or None to update this task
-            task_msg: New description or title
+            task_id: 要更新的子任务的ID，如果为None则更新此任务
+            task_msg: 新的描述或标题
             
         Returns:
-            bool: True if the operation was successful, False otherwise
+            bool: 如果操作成功则为True，否则为False
         """
-        pass
+
+        ...
+
+# 任务服务接口
+@runtime_checkable
+class TaskService(Protocol):
+    """
+    任务服务接口，管理任务集合。
     
-    @abstractmethod
-    def tag_groups(self) -> Dict[str, Dict[str, Any]]:
+    TaskService作为项目的根任务，提供了额外的项目管理方法。
+    支持事务操作，可以将多个任务操作合并为一次提交。
+    """
+
+    @property
+    def root_task(self) -> FileTaskMut:
         """
-        Get the tag groups defined in this task.
+        获取根任务。
         
         Returns:
-            Dict[str, Dict[str, Any]]: Dictionary of tag groups, where each value is a dictionary
-                with 'ordered' (bool) and 'items' (List[str]) keys
+            FileTaskMut: 根任务
         """
-        pass
 
-
-class TaskService(FileTask):
-    """
-    Task service interface that manages a collection of tasks.
+        ...
     
-    TaskService is a special case of FileTask that serves as the root task
-    for a project. It provides additional methods for project management.
-    """
-    
-    @abstractmethod
-    def __init__(self, file_service: FileService, numbering_service: NumberingService) -> None:
+    def __init__(self, file_service: FileService, numbering_service: Optional[NumberingService] = None) -> None:
         """
-        Initialize a TaskService instance.
+        初始化TaskService实例。
         
         Args:
-            file_service: The file service to use for storage operations
-            numbering_service: The numbering service to use for generating task IDs
+            file_service: 用于存储操作的文件服务
+            numbering_service: 可选的用于生成任务ID的编号服务
         """
-        pass
 
-    @abstractmethod
-    def new_task(self, task_msg: str, task_prefix: Optional[str] = None) -> Task:
+        ...
+    
+    def new_task(self, task_msg: str, task_prefix: Optional[str] = None) -> FileTaskMut:
         """
-        Create a new task as a subtask of this file task.
+        创建一个新任务。
         
         Args:
-            task_msg: Description of the task
-            task_prefix: Optional prefix for the task ID
+            task_msg: 任务描述
+            task_prefix: 可选的任务ID前缀
             
         Returns:
-            Task: The newly created task
+            FileTaskMut: 新创建的文件任务
         """
-        # 对于 TaskService，返回的是 FileTask 
-        pass
+
+        ...
     
-    @abstractmethod
     def list_tasks(self, include_archived: bool = False) -> List[Dict[str, Any]]:
         """
-        List all tasks managed by this service.
+        列出此服务管理的所有任务。
         
         Args:
-            include_archived: If True, include archived tasks in the list
+            include_archived: 如果为True，则在列表中包含已归档的任务
             
         Returns:
-            List[Dict[str, Any]]: List of task information dictionaries containing:
-                - id: Task ID
-                - name: Task name
-                - description: Task description
-                - created_at: Creation timestamp
-                - archived_at: Archive timestamp (None if not archived)
-                - tags: List of associated tags
+            List[Dict[str, Any]]: 任务信息字典列表，包含：
+                - id: 任务ID
+                - name: 任务名称
+                - description: 任务描述
+                - created_at: 创建时间戳
+                - archived_at: 归档时间戳（如果未归档则为None）
+                - tags: 关联的标签列表
         """
-        pass
+
+        ...
     
-    @abstractmethod
-    def get_task(self, task_id: str) -> Optional[FileTask]:
+    def get_task(self, task_id: str) -> Optional[FileTaskMut]:
         """
-        Get a specific task by ID.
+        根据ID获取特定任务。
         
         Args:
-            task_id: ID of the task to retrieve
+            task_id: 要检索的任务的ID
             
         Returns:
-            Optional[FileTask]: The task, or None if not found
+            Optional[FileTaskMut]: 任务，如果未找到则为None
             
         Raises:
-            ValueError: If the task is archived
+            ValueError: 如果任务已归档
         """
-        pass
+
+        ...
     
-    @abstractmethod
     def archive_task(self, task_id: str) -> bool:
         """
-        Archive a task.
+        归档任务。
         
         Args:
-            task_id: ID of the task to archive
+            task_id: 要归档的任务的ID
             
         Returns:
-            bool: True if the task was archived, False if not found
+            bool: 如果任务已归档则为True，如果未找到则为False
         """
-        pass
+
+        ...
     
-    @abstractmethod
     def delete_archived_task(self, task_id: Optional[str] = None) -> int:
         """
-        Delete archived tasks.
+        删除已归档的任务。
         
         Args:
-            task_id: Optional ID of a specific archived task to delete.
-                   If None, all archived tasks will be deleted.
+            task_id: 可选的要删除的特定已归档任务的ID。
+                   如果为None，则将删除所有已归档的任务。
             
         Returns:
-            int: Number of tasks deleted
+            int: 删除的任务数量
         """
-        pass
 
+        ...
+    
+    def transaction(self, commit_message: str = "") -> 'TaskTransaction':
+        """
+        创建一个新的任务事务。
+        
+        Args:
+            commit_message: 提交消息
+            
+        Returns:
+            TaskTransaction: 新创建的事务对象
+        """
 
-# Alias for backward compatibility and clarity
+        ...
+
+# 任务事务接口
+@runtime_checkable
+class TaskTransaction(Protocol):
+    """
+    任务事务接口，支持批量操作任务。
+    
+    该接口实现了上下文管理器协议，可以在with语句中使用。
+    所有在事务中执行的操作将在事务结束时一次性提交。
+    """
+
+    def __enter__(self) -> 'TaskTransaction':
+        """
+        进入事务上下文。
+        
+        Returns:
+            TaskTransaction: 事务对象自身
+        """
+
+        ...
+    
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        """
+        退出事务上下文。
+        
+        如果没有异常发生，提交所有更改；否则回滚更改。
+        
+        Args:
+            exc_type: 异常类型
+            exc_val: 异常值
+            exc_tb: 异常回溯
+            
+        Returns:
+            bool: 是否抑制异常
+        """
+
+        ...
+    
+    def new_task(self, task_msg: str, task_prefix: Optional[str] = None) -> FileTaskMut:
+        """
+        在事务中创建新任务。
+        
+        Args:
+            task_msg: 任务描述
+            task_prefix: 可选的任务ID前缀
+            
+        Returns:
+            FileTaskMut: 新创建的文件任务
+        """
+
+        ...
+    
+    def archive_task(self, task_id: str) -> bool:
+        """
+        在事务中归档任务。
+        
+        Args:
+            task_id: 要归档的任务的ID
+            
+        Returns:
+            bool: 如果任务已归档则为True，如果未找到则为False
+        """
+
+        ...
+    
+    def delete_archived_task(self, task_id: Optional[str] = None) -> int:
+        """
+        在事务中删除已归档的任务。
+        
+        Args:
+            task_id: 可选的要删除的特定已归档任务的ID。
+                   如果为None，则将删除所有已归档的任务。
+            
+        Returns:
+            int: 删除的任务数量
+        """
+
+        ...
+
+# 向后兼容性别名
 ProjectService = TaskService
