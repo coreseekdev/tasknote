@@ -74,6 +74,10 @@ class TreeSitterListBlock(ListBlock):
     @property
     def ordered(self) -> bool:
         return self._ordered
+
+    @property
+    def is_ordered(self) -> bool:
+        return self._ordered
     
     @property
     def text_range(self) -> Tuple[int, int]:
@@ -226,6 +230,7 @@ class TreeSitterMarkdownService(MarkdownService):
             order = int(ordered_match.group(1))
         
         # Process item content
+        paragraph_text = ""
         for child in node.children:
             if child.type == 'task_list_marker_checked':
                 is_task = True
@@ -234,7 +239,9 @@ class TreeSitterMarkdownService(MarkdownService):
                 is_task = True
                 is_completed = False
             elif child.type == 'paragraph':
-                text = content[child.start_byte:child.end_byte].strip()
+                # Only include text from the paragraph node
+                paragraph_text = content[child.start_byte:child.end_byte].strip()
+                text = paragraph_text
         
         # Remove list markers from text
         text = re.sub(r'^\s*\d+\.\s+|^\s*[-*]\s+', '', text)
@@ -272,32 +279,59 @@ class TreeSitterMarkdownService(MarkdownService):
         """
         items = []
         
-        # Determine if this is an ordered list
+        # Determine if this is an ordered list by checking the first list_item's marker
         first_item = next((c for c in node.children if c.type == 'list_item'), None)
         if not first_item:
             return None
-            
-        raw_text = content[first_item.start_byte:first_item.end_byte]
-        is_ordered = bool(re.match(r'^\s*\d+\.', raw_text))
+
+        # Look for ordered list marker (a number followed by a period)
+        item_text = content[first_item.start_byte:first_item.end_byte]
+        is_ordered = bool(re.match(r'^\s*\d+\.', item_text))
         
         # Process all items
+        current_items = []
+        current_is_ordered = is_ordered
+        blocks = []
+
         for child in node.children:
             if child.type == 'list_item':
+                # Check if this item's order type matches current block
+                item_text = content[child.start_byte:child.end_byte]
+                item_is_ordered = bool(re.match(r'^\s*\d+\.', item_text))
+                
+                # If order type changes, create a new block
+                if item_is_ordered != current_is_ordered and current_items:
+                    blocks.append(TreeSitterListBlock(
+                        _items=current_items,
+                        _level=level,
+                        _start_pos=current_items[0]._start_pos,
+                        _end_pos=current_items[-1]._end_pos,
+                        _ordered=current_is_ordered
+                    ))
+                    current_items = []
+                    current_is_ordered = item_is_ordered
+                
                 item = self._process_list_item(child, content, level)
                 if item:
-                    items.append(item)
+                    current_items.append(item)
         
-        if not items:
+        # Create final block if there are remaining items
+        if current_items:
+            blocks.append(TreeSitterListBlock(
+                _items=current_items,
+                _level=level,
+                _start_pos=current_items[0]._start_pos,
+                _end_pos=current_items[-1]._end_pos,
+                _ordered=current_is_ordered
+            ))
+        
+        # If no blocks were created, return None
+        if not blocks:
             return None
-            
-        # Create list block
-        return TreeSitterListBlock(
-            _items=items,
-            _level=level,
-            _start_pos=node.start_byte,
-            _end_pos=node.end_byte,
-            _ordered=is_ordered
-        )
+        
+        # Return first block, which may be the only one
+        # Other blocks will be handled by the parent parser
+        return blocks[0]
     
     def get_meta(self, content: str) -> DocumentMeta:
         """Extract metadata (YAML frontmatter) from the markdown content.
