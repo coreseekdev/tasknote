@@ -50,16 +50,20 @@ class InlineTaskImpl(InlineTask):
         Args:
             file_service: The file service to use for storage operations
             numbering_service: The numbering service to use for generating task IDs
-            task_id: ID of the task
-            task_msg: Description of the task
-            parent_task: The parent FileTask that contains this InlineTask
+            edit_session: The edit session to use for modifying the task
             list_item: The ListItem object representing this task in the markdown
         """
-        self._task_id = "task_id"
+        from tasknotes.core.markdown import parse_task_inline_string
+        
         self.file_service = file_service
         self.numbering_service = numbering_service
         self._edit_session = edit_session
         self.list_item = list_item
+        
+        # Parse the list item text to extract task ID, link, and text
+        parsed_result = parse_task_inline_string(list_item.text)
+        self._task_id = parsed_result.get('task_id', None) or "task_id"
+        self._task_message = parsed_result.get('text', list_item.text)
     
     @property
     def task_id(self) -> str:
@@ -68,8 +72,8 @@ class InlineTaskImpl(InlineTask):
     
     @property
     def task_message(self) -> str:
-        """获取任务ID"""
-        return self._task_id
+        """获取任务消息内容"""
+        return self._task_message
 
     def convert_task(self) -> FileTask:
         """Convert this inline task to a file task."""
@@ -315,7 +319,7 @@ class FileTaskImpl(FileTask):
             for list_item in list_block.list_items():
                 # TODO: 只处理任务类型的列表项, 在当前的实现中
                 if list_item.is_task:
-                    result.append((list_item, task_id))
+                    result.append(list_item)
         
         return result
 
@@ -418,18 +422,20 @@ class FileTaskImpl(FileTask):
             
             # 重新解析，并获取 task 列表
             task_items = self._get_tasks()
-            print("------", task_items, task_id)
 
             # 查找刚刚添加的任务
-            for list_item, item_task_id in task_items:
-                if item_task_id == task_id:
-                    # 创建并返回 InlineTask 实例，包含对应的 ListItem
-                    return InlineTaskImpl(
-                        self.file_service,
-                        self.numbering_service,
-                        self.get_edit_session(),
-                        list_item
-                    )
+            for list_item in task_items:
+                # 创建 InlineTask 实例
+                inline_task = InlineTaskImpl(
+                    self.file_service,
+                    self.numbering_service,
+                    self.get_edit_session(),
+                    list_item
+                )
+                
+                # 检查 task_id 是否匹配
+                if inline_task.task_id == task_id:
+                    return inline_task
         
         # 如果没有找到对应的列表项，创建失败
         return None
