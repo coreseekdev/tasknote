@@ -40,7 +40,25 @@ FILE_TASK_TEMPLATE = """# {name}
 
 """
 
-class InlineTaskImpl(InlineTask):
+class TaskBase:
+    """Base class for task implementations with shared domain knowledge."""
+    
+    def __init__(self, file_service: FileService, numbering_service: NumberingService):
+        """Initialize TaskBase with common services and configuration.
+        
+        Args:
+            file_service: The file service to use for storage operations
+            numbering_service: The numbering service to use for generating task IDs
+        """
+        self.file_service = file_service
+        self.numbering_service = numbering_service
+        
+        # 获取任务目录配置
+        self.tasks_dir = config.get("tasks.active_dir", "tasks")
+        self.archived_dir = config.get("tasks.archived_dir", "archived")
+
+
+class InlineTaskImpl(TaskBase, InlineTask):
     """Implementation of InlineTask interface."""
     
     def __init__(self, file_service: FileService, numbering_service: NumberingService,
@@ -55,8 +73,10 @@ class InlineTaskImpl(InlineTask):
         """
         from tasknotes.core.markdown import parse_task_inline_string
         
-        self.file_service = file_service
-        self.numbering_service = numbering_service
+        # 初始化基类
+        TaskBase.__init__(self, file_service, numbering_service)
+        InlineTask.__init__(self)  # 如果 InlineTask 有初始化方法
+        
         self._edit_session = edit_session
         self.list_item = list_item
         
@@ -85,8 +105,57 @@ class InlineTaskImpl(InlineTask):
         返回当前 inline task 关联的 FileTask ，如果存在
 
         NOTE: 当 Task 使用 link 的形式表示时，链接的 target 就是 FileTask
+        
+        规则：
+        1. 只有形如 filename.md 的 link 才是有效的 filetask link，不能包括任何路径
+        2. 需要同时检测活动目录和归档目录，确定文件的具体路径
+        
+        Raises:
+            NotImplementedError: 如果链接无效或文件不存在
         """
-        pass
+        # 如果没有链接，返回 None
+        if not self._task_link:
+            return None
+            
+        # 从链接中提取文件名
+        file_name = os.path.basename(self._task_link)
+
+        # 检查是否包含路径
+        if self._task_link != file_name:
+            raise NotImplementedError(f"Invalid FileTask link: {self._task_link}. Link cannot contain path.")
+        
+        # 检查是否是绝对链接或锐点
+        if self._task_link.startswith('/') or self._task_link.startswith('#'):
+            raise NotImplementedError(f"Invalid FileTask link: {self._task_link}. Link cannot be absolute or anchor.")
+        
+        # 必须带文件名没有扩展名，添加 .md 扩展名
+        if not file_name.endswith('.md'):
+            file_name += '.md'
+
+        # 移除扩展名以获取任务 ID , 理论上应该与 当前 task 一致
+        task_id = os.path.splitext(file_name)[0]
+
+        if task_id != self._task_id:
+            raise NotImplementedError(f"Inconsistent task ID: link points to {task_id}, but current task ID is {self._task_id}")
+        
+        # 首先检查活动目录
+        active_task_path = os.path.join(self.tasks_dir, file_name)
+        archived_task_path = os.path.join(self.archived_dir, file_name)
+        
+        # 确定文件路径
+        if self.file_service.file_exists(active_task_path):
+            task_path = active_task_path
+        elif self.file_service.file_exists(archived_task_path):
+            task_path = archived_task_path
+        else:
+            # 如果两个目录都没有找到文件，抛出异常
+            raise NotImplementedError(f"FileTask not found: {file_name}. The task may have been deleted.")
+        
+        # 读取任务文件内容
+        task_content = self.file_service.read_file(task_path)
+        
+        # 创建并返回 FileTask 实例
+        return FileTaskImpl(self.file_service, self.numbering_service, task_id, task_content)
 
     def mark_as_done(self) -> bool:
         """Mark the task as done."""
@@ -109,29 +178,31 @@ class InlineTaskImpl(InlineTask):
         raise NotImplementedError("tags not implemented")
 
 
-class FileTaskImpl(FileTask):
+class FileTaskImpl(TaskBase, FileTask):
     """Implementation of FileTask interface."""
     
-    def __init__(self, file_service: FileService, numbering_service: NumberingService, task_id: str, context: str):
+    def __init__(self, file_service: FileService, numbering_service: NumberingService,
+                 task_id: str, context: str):
         """Initialize a FileTaskImpl instance.
         
         Args:
             file_service: The file service to use for storage operations
             numbering_service: The numbering service to use for generating task IDs
             task_id: ID of the task
-            context: The markdown content of the task
+            context: The content of the task file
         """
+        # 初始化基类
+        TaskBase.__init__(self, file_service, numbering_service)
+        FileTask.__init__(self, file_service, numbering_service, task_id, context)
+        
         self._task_id = task_id
-        self.file_service = file_service
-        self.numbering_service = numbering_service
         self._context = context
-        self._context_updated_count = 0
-        self._parse_cache = None
+        self._headers_cache = None
     
     @property
     def context(self) -> str:
         """Get the markdown content of the task.
-        
+    
         Returns:
             str: The markdown content
         """
