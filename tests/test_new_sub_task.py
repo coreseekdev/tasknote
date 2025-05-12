@@ -180,10 +180,6 @@ class MockFileTaskImpl(FileTaskImpl):
         """获取所有子任务"""
         return []
     
-    def mark_as_archived(self, force: bool = False) -> bool:
-        """将任务标记为已归档"""
-        return True
-    
     def add_related_task(self, task_id: str) -> 'FileTask':
         """添加相关任务"""
         return self

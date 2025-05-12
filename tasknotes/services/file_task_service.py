@@ -595,6 +595,9 @@ class FileTaskImpl(TaskBase):
         Returns:
             str: The markdown content
         """
+        if self.is_outofdate():
+            raise ValueError("Task is out of date, only task_id is accessible")
+
         return self._context
     
     @context.setter
@@ -610,6 +613,11 @@ class FileTaskImpl(TaskBase):
             self._context = value
             self._context_updated_count += 1
             self._parse_cache = None  # 内容变化时清除缓存
+            edit_count = self.get_edit_session().edit_count
+            if self._context != self.get_edit_session().get_content():
+                edit_count += 1  # 让其他关联的对象都过期
+            self.get_edit_session().updated_content(self._context, edit_count)
+            self._creation_edit_count = edit_count  # 更新，避免自身过期
     
     def get_markdown_service(self) -> MarkdownService:
         """Get or create a markdown service instance.
@@ -630,6 +638,9 @@ class FileTaskImpl(TaskBase):
         Returns:
             Tuple: The parsed metadata and headers
         """
+        if self.is_outofdate():
+            raise ValueError("Task is out of date, only task_id is accessible")
+
         # 使用当前上下文，并利用缓存
         if self._parse_cache is None:
             # 解析并缓存结果
@@ -644,6 +655,8 @@ class FileTaskImpl(TaskBase):
         Returns:
             DocumentMeta: The parsed metadata
         """
+        if self.is_outofdate():
+            raise ValueError("Task is out of date, only task_id is accessible")
         meta, _ = self.parse_markdown()
         return meta
     
@@ -653,6 +666,9 @@ class FileTaskImpl(TaskBase):
         Returns:
             Iterator[HeadSection]: The parsed headers
         """
+        if self.is_outofdate():
+            raise ValueError("Task is out of date, only task_id is accessible")
+        
         _, headers = self.parse_markdown()
         return headers
         
@@ -802,6 +818,9 @@ class FileTaskImpl(TaskBase):
         Returns:
             InlineTask: The newly created inline task
         """
+        if self.is_outofdate():
+            raise ValueError("Task is out of date, only task_id is accessible")
+
         # 确保任务消息只有一行
         if '\n' in task_msg:
             task_msg = task_msg.split('\n')[0]
@@ -855,6 +874,9 @@ class FileTaskImpl(TaskBase):
         Returns:
             List[Task]: 子任务列表（可以是InlineTask或FileTask）
         """
+        if self.is_outofdate():
+            raise ValueError("Task is out of date, only task_id is accessible")
+
         tasks = []
         
         # 获取所有任务列表项及其对应的任务ID
@@ -885,27 +907,29 @@ class FileTaskImpl(TaskBase):
                 'ordered'（bool）和'items'（List[str]）键的字典
         """
         tag_groups = {}
-        
+        if self.is_outofdate():
+            raise ValueError("Task is out of date, only task_id is accessible")
+
         # 查找标签部分
         headers = list(self.get_headers())
         for header in headers:
-            if header.title.lower() == "tags":
+            if header.text.lower() == "tags":
                 # 查找标签组（level 3 标题，即 ### 标题）
                 for sub_header in header.children:
-                    if sub_header.level == 3:  # level 3 对应 ### 标题
-                        group_name = sub_header.title
+                    if sub_header.head_level == 3:  # level 3 对应 ### 标题
+                        group_name = sub_header.text
                         
                         # 检查是否是有序列表
                         is_ordered = False
                         items = []
                         
-                        # 查找列表
-                        for block in sub_header.blocks:
-                            if isinstance(block, ListBlock):
-                                is_ordered = block.ordered
-                                # 提取列表项文本
-                                for item in block.items:
-                                    items.append(item.text.strip())
+                        # 使用 get_lists 接口获取列表
+                        for list_block in sub_header.get_lists():
+                            is_ordered = list_block.ordered
+                            # 提取列表项文本
+                            for list_item in list_block.list_items():
+                                items.append(list_item.text.strip())
+                            break # 仅处理第一个列表
                         
                         # 添加到标签组字典
                         tag_groups[group_name] = {
@@ -925,22 +949,104 @@ class FileTaskImpl(TaskBase):
         Returns:
             bool: 是否删除成功
         """
+        # 在没有通知机制的情况下，删除 file task 会导致 其他引用这个任务的 task 无法同时调整
+        # 暂不实现，保持抛出异常的情况
         raise NotImplementedError("delete not implemented")
     
     def mark_as_done(self) -> bool:
-        """Mark the task as done."""
-        # 简单实现，仅用于测试
+        """将任务标记为已完成。
+        
+        通过更新元数据中的 'done' 字段来标记任务完成状态。
+        
+        Returns:
+            bool: 如果操作成功则返回 True，否则返回 False
+        """
+        if self.is_outofdate():
+            raise ValueError("Task is out of date, only task_id is accessible")
+        
+        # 获取当前元数据
+        meta = self.get_meta()
+        
+        # 检查当前状态
+        if meta.get('done', False):
+            return True  # 已经是完成状态，无需更改
+        
+        # 更新元数据
+        meta.set('done', True)
+        
+        # 应用更改
+        edit_session = self.get_edit_session()
+        meta.apply(edit_session)
+        
+        # 更新上下文
+        self.context = edit_session.current_content
+        
         return True
     
     def mark_as_undone(self) -> bool:
-        """Mark the task as not done."""
-        # 简单实现，仅用于测试
+        """将任务标记为未完成。
+        
+        通过更新元数据中的 'done' 字段来标记任务完成状态。
+        
+        Returns:
+            bool: 如果操作成功则返回 True，否则返回 False
+        """
+        if self.is_outofdate():
+            raise ValueError("Task is out of date, only task_id is accessible")
+        
+        # 获取当前元数据
+        meta = self.get_meta()
+        
+        # 检查当前状态
+        if not meta.get('done', False):
+            return True  # 已经是未完成状态，无需更改
+        
+        # 更新元数据
+        meta.set('done', False)
+        
+        # 应用更改
+        edit_session = self.get_edit_session()
+        meta.apply(edit_session)
+        
+        # 更新上下文
+        self.context = edit_session.current_content
+        
         return True
     
     def tags(self, new_tags: Optional[List[str]] = None) -> List[str]:
-        """Get or replace the list of tags associated with this task."""
-        # 简单实现，仅用于测试
-        return []
+        """获取或替换与此任务关联的标签列表。
+        
+        通过元数据中的 'tags' 字段管理任务标签。
+        
+        Args:
+            new_tags: 新的标签列表。
+                      如果为 None，则只获取当前标签。
+                      如果为空列表 []，则清空标签。
+        
+        Returns:
+            List[str]: 任务的标签列表
+        """
+        if self.is_outofdate():
+            raise ValueError("Task is out of date, only task_id is accessible")
+        
+        # 获取当前元数据
+        meta = self.get_meta()
+        
+        # 如果只是获取标签（new_tags 为 None）
+        if new_tags is None:
+            return meta.get('tags', [])
+        
+        # 更新标签
+        meta.set('tags', new_tags)
+        
+        # 应用更改
+        edit_session = self.get_edit_session()
+        meta.apply(edit_session)
+        
+        # 更新上下文
+        self.context = edit_session.current_content
+        
+        return new_tags
 
     def mark_as_archived(self, force: bool = False) -> bool:
         """Mark this task as archived."""
@@ -948,20 +1054,54 @@ class FileTaskImpl(TaskBase):
     
     def add_related_task(self, task_id: str) -> 'FileTask':
         """Add an existing task as a related task to this task."""
+        # 实际是添加一个 task_id 已知的 sub task 
+        # 暂时不支持
         raise NotImplementedError("add_related_task not implemented")
     
-    def modify_task(self, task_id: Optional[str] = None, task_msg: Optional[str] = None) -> bool:
-        """Update this task or a subtask."""
-        raise NotImplementedError("modify_task not implemented")
-    
-    def tag_groups(self) -> Dict[str, Dict[str, Any]]:
-        """获取此任务中定义的标签组。
+    def modify_task(self, task_msg: Optional[str] = None) -> bool:
+        """修改任务标题（第一个 level-1 标题）。
         
+        Args:
+            task_msg: 新的任务标题
+            
         Returns:
-            Dict[str, Dict[str, Any]]: 标签组字典
+            bool: 如果修改成功则返回 True，否则返回 False
         """
-        return self.get_tag_groups()
-
+        if self.is_outofdate():
+            raise ValueError("Task is out of date, only task_id is accessible")
+        
+        if task_msg is None:
+            return False
+        
+        # 解析标记文本，获取所有标题
+        headers = list(self.get_headers())
+        
+        # 查找第一个 level 1 标题
+        for header in headers:
+            if header.head_level == 1:
+                # 获取标题的文本范围
+                text_begin, text_end = header.text_range
+                
+                # 使用编辑会话替换标题
+                edit_session = self.get_edit_session()
+                edit_session.replace(text_begin, text_end, task_msg)
+                
+                # 更新上下文
+                self.context = edit_session.current_content
+                
+                return True
+        
+        # 如果没有找到 level 1 标题，则在文档开头添加
+        new_header = '# ' + task_msg
+        if self._context and not self._context.startswith('#'):
+            new_header += '\n\n'
+        
+        edit_session = self.get_edit_session()
+        edit_session.insert(0, new_header)
+        
+        # 更新上下文
+        self.context = edit_session.current_content
+        return True
 
 class FileTaskService(TaskBase):
     """Implementation of TaskService interface using composition pattern.

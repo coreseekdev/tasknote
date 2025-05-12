@@ -288,19 +288,6 @@ class FileTaskMut(FileTask, TaskMut, Protocol):
 
         ...
     
-    def mark_as_archived(self, force: bool = False) -> bool:
-        """
-        将此任务标记为已归档。
-        
-        Args:
-            force: 如果为True，即使有活动子任务也强制归档
-            
-        Returns:
-            bool: 如果操作成功则为True，否则为False
-        """
-
-        ...
-    
     def add_related_task(self, task_id: str) -> 'FileTaskMut':
         """
         将现有任务添加为此任务的相关任务。
@@ -314,16 +301,9 @@ class FileTaskMut(FileTask, TaskMut, Protocol):
 
         ...
     
-    def modify_task(self, task_id: Optional[str] = None, task_msg: Optional[str] = None) -> bool:
+    def modify_task(self, task_msg: Optional[str] = None) -> bool:
         """
-        更新此任务或子任务。
-        
-        Args:
-            task_id: 要更新的子任务的ID，如果为None则更新此任务
-            task_msg: 新的描述或标题
-            
-        Returns:
-            bool: 如果操作成功则为True，否则为False
+        修改当前任务的标题
         """
 
         ...

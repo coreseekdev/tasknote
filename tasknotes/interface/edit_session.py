@@ -45,7 +45,7 @@ class EditSession(ABC):
         self._edit_count = 0  # 初始化修改计数为0
         self.created_at = time.time()
         self.last_modified = self.created_at
-        
+
     @property
     def edit_count(self) -> int:
         """获取当前修改计数"""
@@ -54,6 +54,11 @@ class EditSession(ABC):
     @property
     def session_id(self):
         return self._session_id
+
+    @abstractmethod
+    def updated_content(self, content: str, edit_count: int) -> EditSession:
+        self.current_content = content
+        self._edit_count = edit_count
 
     @abstractmethod
     def insert(self, position: int, text: str) -> EditOperation:
