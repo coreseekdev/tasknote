@@ -199,9 +199,6 @@ class MockFileTask(FileTask):
     def add_related_task(self, task_id):
         return self
     
-    def convert_task(self, task_id):
-        return self
-    
     def tag_groups(self):
         return {"Milestones": {"ordered": False, "items": []}, "Kanban": {"ordered": True, "items": ["TODO", "DOING", "DONE"]}}
 

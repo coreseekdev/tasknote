@@ -110,6 +110,15 @@ class InlineTask(Task):
         """
         pass
 
+    @abstractmethod
+    def get_related_file_task(self) -> Optional['FileTask']:
+        """
+        返回当前 inline task 关联的 FileTask ，如果存在
+
+        NOTE: 当 Task 使用 link 的形式表示时，链接的 target 就是 FileTask
+        """
+        pass
+
 
 class FileTask(Task):
     """
@@ -192,19 +201,6 @@ class FileTask(Task):
             
         Returns:
             FileTask: The related file task
-        """
-        pass
-    
-    @abstractmethod
-    def convert_task(self, task_id: str) -> 'FileTask':
-        """
-        Convert a subtask to a file task.
-        
-        Args:
-            task_id: ID of the subtask to convert
-            
-        Returns:
-            FileTask: The newly created file task
         """
         pass
     

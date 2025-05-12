@@ -63,6 +63,7 @@ class InlineTaskImpl(InlineTask):
         # Parse the list item text to extract task ID, link, and text
         parsed_result = parse_task_inline_string(list_item.text)
         self._task_id = parsed_result.get('task_id', None) or "task_id"
+        self._task_link = parsed_result.get('link', None)
         self._task_message = parsed_result.get('text', list_item.text)
     
     @property
@@ -78,7 +79,15 @@ class InlineTaskImpl(InlineTask):
     def convert_task(self) -> FileTask:
         """Convert this inline task to a file task."""
         raise NotImplementedError("convert_task not implemented")
-        
+
+    def get_related_file_task(self) -> Optional['FileTask']:
+        """
+        返回当前 inline task 关联的 FileTask ，如果存在
+
+        NOTE: 当 Task 使用 link 的形式表示时，链接的 target 就是 FileTask
+        """
+        pass
+
     def mark_as_done(self) -> bool:
         """Mark the task as done."""
         raise NotImplementedError("mark_as_done not implemented")
@@ -323,66 +332,6 @@ class FileTaskImpl(FileTask):
         
         return result
 
-    def _parse_task_id(self, text: str) -> str:
-        """从任务文本中解析任务ID
-        
-        支持以下格式:
-        - "task" (无ID，返回空字符串)
-        - "`TASK-xxx`yyyyy" (返回 "TASK-xxx")
-        - "[`TASK-xxx`yyyyy](Task-xxx.md)" (返回 "TASK-xxx")
-        - "TASK-xxx: yyyyy" (返回 "TASK-xxx")
-        
-        Args:
-            text: 任务文本
-        
-        Returns:
-            str: 解析出的任务ID，如果没有ID则返回空字符串
-        """
-        # 尝试匹配 TASK-xxx: 格式 (最常见的格式)
-        prefix_pattern = r'([A-Z]+-\d+):'
-        prefix_match = re.search(prefix_pattern, text)
-        if prefix_match:
-            return prefix_match.group(1)
-            
-        # 尝试匹配 `TASK-xxx` 格式
-        backtick_pattern = r'`([A-Z]+-\d+)`'
-        backtick_match = re.search(backtick_pattern, text)
-        if backtick_match:
-            return backtick_match.group(1)
-        
-        # 尝试匹配 [`TASK-xxx`](Task-xxx.md) 格式
-        link_pattern = r'\[`([A-Z]+-\d+)`.*?\]\(.*?\)'
-        link_match = re.search(link_pattern, text)
-        if link_match:
-            return link_match.group(1)
-        
-        # 没有找到任务ID
-        return ''
-
-    def _extract_task_msg(self, text: str, task_id: str) -> str:
-        """从任务文本中提取任务消息
-        
-        Args:
-            text: 任务文本
-            task_id: 任务ID
-        
-        Returns:
-            str: 提取出的任务消息
-        """
-        if not task_id:
-            # 没有任务ID，整个文本都是任务消息
-            return text.strip()
-        
-        # 移除任务ID及其格式化部分
-        # 处理 `TASK-xxx` 格式
-        msg = re.sub(r'`' + re.escape(task_id) + r'`\s*', '', text)
-        # 处理 [`TASK-xxx`](link) 格式
-        msg = re.sub(r'\[`' + re.escape(task_id) + r'`.*?\]\(.*?\)\s*', '', msg)
-        # 处理 TASK-xxx: 格式
-        msg = re.sub(re.escape(task_id) + r':\s*', '', msg)
-        
-        return msg.strip()
-
     def new_sub_task(self, task_msg: str, task_prefix: Optional[str] = None) -> Optional[InlineTask]:
         """Create a new inline task as a subtask of this file task.
         
@@ -450,9 +399,6 @@ class FileTaskImpl(FileTask):
         
         result = []
         for list_item, task_id in task_items:
-            # 从列表项中提取任务消息
-            task_msg = self._extract_task_msg(list_item.text, task_id)
-            
             # 创建InlineTask实例
             inline_task = InlineTaskImpl(
                     self.file_service,
@@ -475,10 +421,6 @@ class FileTaskImpl(FileTask):
     def add_related_task(self, task_id: str) -> 'FileTask':
         """Add an existing task as a related task to this task."""
         raise NotImplementedError("add_related_task not implemented")
-    
-    def convert_task(self, task_id: str) -> 'FileTask':
-        """Convert a subtask to a file task."""
-        raise NotImplementedError("convert_task not implemented")
     
     def modify_task(self, task_id: Optional[str] = None, task_msg: Optional[str] = None) -> bool:
         """Update this task or a subtask."""
@@ -543,38 +485,21 @@ class FileTaskService(FileTaskImpl, TaskService):
         Returns:
             FileTask: The newly created file task
         """
-        # 1. 调用 FileTaskImpl 的 new_sub_task 方法创建一个 InlineTask
-        # 首先，我们需要在根任务(TASK-000)中添加一个内联任务
-        
-        # 获取任务ID
+        # 1. 获取任务ID
         if task_prefix is None:
             task_prefix = self.numbering_service.get_default_prefix()
             
         task_id = self.numbering_service.get_next_number(task_prefix)
         
-        # 修改根任务文件，在 # Tasks 部分添加新任务
-        root_task_path = os.path.join(self.tasks_dir, f"{self.task_id}.md")
-        root_content = self.file_service.read_file(root_task_path)
+        # 2. 直接使用 self 作为根任务实例添加内联任务
+        # 使用 new_sub_task 方法添加子任务
+        inline_task = self.new_sub_task(task_msg, task_prefix)
         
-        # 找到 ## Tasks 部分并添加新任务
-        task_section_pattern = r"(## Tasks\s*\n)"
-        # 使用r前缀创建原始字符串，避免反斜杠问题
-        newline = "\n"
-        task_entry = f"- [ ] {task_id}: {task_msg.split(newline)[0] if newline in task_msg else task_msg}{newline}"
+        # 如果内联任务创建失败，返回 None
+        if inline_task is None:
+            return None
         
-        if re.search(task_section_pattern, root_content):
-            updated_content = re.sub(task_section_pattern, f"\g<1>{task_entry}", root_content)
-        else:
-            # 如果找不到 Tasks 部分，添加一个
-            updated_content = root_content + f"\n## Tasks\n{task_entry}"
-        
-        # 2. 创建 InlineTask 实例
-        inline_task = InlineTaskImpl(self.file_service, task_id, self)
-        
-        # 3. 调用 convert_task 将 InlineTask 转换为 FileTask
-        # 由于我们需要自己实现转换逻辑，我们将直接创建文件任务
-        
-        # 创建任务内容
+        # 3. 创建任务内容
         task_content = FILE_TASK_TEMPLATE.format(
             name=task_msg.split('\n')[0] if '\n' in task_msg else task_msg,
             description=task_msg if '\n' in task_msg else ""
@@ -583,23 +508,8 @@ class FileTaskService(FileTaskImpl, TaskService):
         # 4. 使用文件服务创建新任务文件
         task_path = os.path.join(self.tasks_dir, f"{task_id}.md")
         
-        # 使用事务更新两个文件
-        try:
-            # 开始事务
-            self.file_service.begin_transaction()
-            
-            # 更新根任务文件
-            self.file_service.write_file(root_task_path, updated_content)
-            
-            # 创建新任务文件
-            self.file_service.write_file(task_path, task_content)
-            
-            # 提交事务
-            self.file_service.commit_transaction()
-        except Exception as e:
-            # 回滚事务
-            self.file_service.rollback_transaction()
-            raise e
+        # 创建新任务文件
+        self.file_service.write_file(task_path, task_content)
         
         # 5. 创建并返回新的 FileTask 实例
         return FileTaskImpl(self.file_service, self.numbering_service, task_id, task_content)
