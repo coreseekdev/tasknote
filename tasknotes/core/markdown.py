@@ -237,6 +237,7 @@ class TreeSitterMarkdownService(MarkdownService):
         
         # Process item content
         paragraph_text = ""
+        link = None
         for child in node.children:
             if child.type == 'task_list_marker_checked':
                 is_task = True
@@ -245,11 +246,9 @@ class TreeSitterMarkdownService(MarkdownService):
                 is_task = True
                 is_completed = False
             elif child.type == 'paragraph':
-                # Only include text from the paragraph node
-                paragraph_text = content[child.start_byte:child.end_byte].strip()
-                text = paragraph_text
-        
-        
+                # Extract text from the paragraph node
+                text = self._extract_text_from_paragraph(child, content)
+            
         # Create list item
         item = TreeSitterListItem(
             _text=text,
@@ -270,6 +269,25 @@ class TreeSitterMarkdownService(MarkdownService):
                     item.add_nested_list(block)
         
         return item
+    
+    def _extract_text_from_paragraph(self, paragraph_node, content: str) -> str:
+        """Extract text content from a paragraph node by finding its inline child.
+        
+        Args:
+            paragraph_node: The tree-sitter node representing the paragraph.
+            content: The full markdown content.
+            
+        Returns:
+            The text content of the paragraph, extracted from the inline node if possible.
+        """
+        # Look for an inline node within the paragraph
+        for child in paragraph_node.children:
+            if child.type == 'inline':
+                # Get text directly from the inline node
+                return content[child.start_byte:child.end_byte]
+        
+        # Fallback to paragraph text if no inline node found
+        return content[paragraph_node.start_byte:paragraph_node.end_byte]
     
     def _process_list_block(self, node, content: str, level: int) -> List[TreeSitterListBlock]:
         """Process a list node and its items.
@@ -425,7 +443,7 @@ class TreeSitterMarkdownService(MarkdownService):
                 elif child.type == 'atx_h6_marker':
                     level = 6
                 elif child.type == 'inline':
-                    text = content[child.start_byte:child.end_byte].strip()
+                    text = content[child.start_byte:child.end_byte]
         
             if level:
                 # Create header section with node reference

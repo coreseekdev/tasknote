@@ -224,5 +224,40 @@ class TestProcessListBlock(unittest.TestCase):
         self.assertEqual(items[2].text, "Third item")
 
 
+    def test_list_items_with_links(self):
+        """Test processing list items with markdown links."""
+        content = """- [ ] [TASK-001: First task](TASK-001.md)
+- [x] [`TASK-002: Second task`](TASK-002.md)
+- Regular item with [link](some-link.md)
+- [TASK-003: No checkbox](TASK-003.md)"""
+        
+        list_blocks = self._get_list_blocks(content)
+        self.assertEqual(len(list_blocks), 1)
+        
+        block = list_blocks[0]
+        self.assertFalse(block.is_ordered)
+        
+        items = list(block.list_items())
+        self.assertEqual(len(items), 4)
+        
+        # First item: unchecked task with link
+        self.assertTrue(items[0].is_task)
+        self.assertFalse(items[0].is_completed_task)
+        self.assertEqual(items[0].text, "[TASK-001: First task](TASK-001.md)")
+        
+        # Second item: checked task with link and backticks
+        self.assertTrue(items[1].is_task)
+        self.assertTrue(items[1].is_completed_task)
+        self.assertEqual(items[1].text, "[`TASK-002: Second task`](TASK-002.md)")
+        
+        # Third item: regular item with link
+        self.assertFalse(items[2].is_task)
+        self.assertEqual(items[2].text, "Regular item with [link](some-link.md)")
+        
+        # Fourth item: link without checkbox
+        self.assertFalse(items[3].is_task)
+        self.assertEqual(items[3].text, "[TASK-003: No checkbox](TASK-003.md)")
+
+
 if __name__ == '__main__':
     unittest.main()
