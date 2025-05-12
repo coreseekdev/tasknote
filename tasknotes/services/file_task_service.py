@@ -55,11 +55,10 @@ class InlineTaskImpl(InlineTask):
             parent_task: The parent FileTask that contains this InlineTask
             list_item: The ListItem object representing this task in the markdown
         """
-        self._task_id = task_id
+        self._task_id = "task_id"
         self.file_service = file_service
         self.numbering_service = numbering_service
-        self.task_msg = task_msg
-        self.parent_task = parent_task
+        self._edit_session = edit_session
         self.list_item = list_item
     
     @property
@@ -109,7 +108,7 @@ class FileTaskImpl(FileTask):
             task_id: ID of the task
             context: The markdown content of the task
         """
-        super().__init__(task_id)
+        self._task_id = task_id
         self.file_service = file_service
         self.numbering_service = numbering_service
         self._context = context
@@ -256,19 +255,17 @@ class FileTaskImpl(FileTask):
                     _, last_item_end = last_item.text_range
                     
                     # 获取当前内容
-                    current_content = edit_session.get_content()
+                    # current_content = edit_session.get_content()
                     
                     # 使用 last_item_end 作为插入位置
                     # 这样可以正确处理嵌套列表的情况
                     insert_pos = last_item_end - 1
                     
                     # 在列表项结束位置插入新任务
-                    task_entry = f"- [ ] {task_id}: {task_msg}\n"
                     edit_session.insert(insert_pos, task_entry)
                 else:
                     # 列表存在但没有列表项，在列表开始处插入
                     list_start, _ = task_list.text_range
-                    task_entry = f"- [ ] {task_id}: {task_msg}\n"
                     edit_session.insert(list_start, task_entry)
             else:
                 # 没有列表，在任务部分的标题后创建新列表
@@ -276,16 +273,15 @@ class FileTaskImpl(FileTask):
                 _, section_end = task_section.text_range
                 
                 # 有内容，在部分结束处插入新任务
-                task_entry = f"\n- [ ] {task_id}: {task_msg}"
-                edit_session.insert(section_end -1, task_entry)
+                edit_session.insert(section_end-1, task_entry)
         else:
             # 没有找到任务部分，添加新部分
             current_content = edit_session.get_content()
-            edit_session.insert(len(current_content), f"\n## {task_section_name}\n- [ ] {task_id}: {task_msg}\n")
+            edit_session.insert(len(current_content), f"\n## {task_section_name}\n{task_entry}\n")
         
         return True
     
-    def _get_tasks(self) -> List[Tuple[ListItem, str]]:
+    def _get_tasks(self) -> List[ListItem]:
         """获取所有任务列表项及其对应的任务ID
         
         Returns:
@@ -317,10 +313,8 @@ class FileTaskImpl(FileTask):
         # 处理所有列表块中的任务项
         for list_block in task_list_blocks:
             for list_item in list_block.list_items():
-                # 只处理任务类型的列表项
+                # TODO: 只处理任务类型的列表项, 在当前的实现中
                 if list_item.is_task:
-                    # 解析任务ID
-                    task_id = self._parse_task_id(list_item.text)
                     result.append((list_item, task_id))
         
         return result
@@ -332,6 +326,7 @@ class FileTaskImpl(FileTask):
         - "task" (无ID，返回空字符串)
         - "`TASK-xxx`yyyyy" (返回 "TASK-xxx")
         - "[`TASK-xxx`yyyyy](Task-xxx.md)" (返回 "TASK-xxx")
+        - "TASK-xxx: yyyyy" (返回 "TASK-xxx")
         
         Args:
             text: 任务文本
@@ -339,6 +334,12 @@ class FileTaskImpl(FileTask):
         Returns:
             str: 解析出的任务ID，如果没有ID则返回空字符串
         """
+        # 尝试匹配 TASK-xxx: 格式 (最常见的格式)
+        prefix_pattern = r'([A-Z]+-\d+):'
+        prefix_match = re.search(prefix_pattern, text)
+        if prefix_match:
+            return prefix_match.group(1)
+            
         # 尝试匹配 `TASK-xxx` 格式
         backtick_pattern = r'`([A-Z]+-\d+)`'
         backtick_match = re.search(backtick_pattern, text)
@@ -415,10 +416,10 @@ class FileTaskImpl(FileTask):
             # 更新上下文（使用setter，会自动处理缓存）
             self.context = updated_content
             
-            # 重新解析文档以获取新添加的列表项
-            self._parse_cache = None  # 清除缓存，确保重新解析
+            # 重新解析，并获取 task 列表
             task_items = self._get_tasks()
-            
+            print("------", task_items, task_id)
+
             # 查找刚刚添加的任务
             for list_item, item_task_id in task_items:
                 if item_task_id == task_id:
