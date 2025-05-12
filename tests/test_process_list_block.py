@@ -75,24 +75,31 @@ class TestProcessListBlock(unittest.TestCase):
 3. Third ordered item"""
         
         list_blocks = self._get_list_blocks(content)
-        self.assertEqual(len(list_blocks), 2)
+        self.assertEqual(len(list_blocks), 3)
         
-        # First block should be ordered
-        ordered_block = list_blocks[0]
-        self.assertTrue(ordered_block.is_ordered)
-        ordered_items = list(ordered_block.list_items())
-        self.assertEqual(len(ordered_items), 2)
-        self.assertEqual(ordered_items[0].text, "First ordered item")
-        self.assertEqual(ordered_items[1].text, "Second ordered item")
+        # First block should be ordered (1-2)
+        first_block = list_blocks[0]
+        self.assertTrue(first_block.is_ordered)
+        first_items = list(first_block.list_items())
+        self.assertEqual(len(first_items), 2)
+        self.assertEqual(first_items[0].text, "First ordered item")
+        self.assertEqual(first_items[1].text, "Second ordered item")
         
         # Second block should be unordered
-        unordered_block = list_blocks[1]
-        self.assertFalse(unordered_block.is_ordered)
-        unordered_items = list(unordered_block.list_items())
-        self.assertEqual(len(unordered_items), 3)  # Including the last ordered item
-        self.assertEqual(unordered_items[0].text, "Unordered item 1")
-        self.assertEqual(unordered_items[1].text, "Unordered item 2")
-        self.assertEqual(unordered_items[2].text, "Third ordered item")
+        second_block = list_blocks[1]
+        self.assertFalse(second_block.is_ordered)
+        second_items = list(second_block.list_items())
+        self.assertEqual(len(second_items), 2)
+        self.assertEqual(second_items[0].text, "Unordered item 1")
+        self.assertEqual(second_items[1].text, "Unordered item 2")
+        
+        # Third block should be ordered (3)
+        third_block = list_blocks[2]
+        self.assertTrue(third_block.is_ordered)
+        third_items = list(third_block.list_items())
+        self.assertEqual(len(third_items), 1)
+        self.assertEqual(third_items[0].text, "Third ordered item")
+        self.assertEqual(third_items[0].order, 3)
 
     def test_nested_list_blocks(self):
         """Test processing nested list blocks."""

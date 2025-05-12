@@ -9,14 +9,21 @@ def print_node_types(node, content, level=0):
     if node.type == 'list_item':
         print(f"{indent}Content: {content[node.start_byte:node.end_byte]}")
         print(f"{indent}Children types: {[c.type for c in node.children]}")
+        # Print the actual marker
+        marker = next((c for c in node.children if c.type in ['list_marker_dot', 'list_marker_minus']), None)
+        if marker:
+            print(f"{indent}Marker: '{content[marker.start_byte:marker.end_byte]}'")
+            print(f"{indent}Marker type: {marker.type}")
     for child in node.children:
         print_node_types(child, content, level + 1)
 
 def main():
-    # Create a simple markdown document with lists
-    content = """1. First item
-2. Second item
-- Unordered item"""
+    # Create a simple markdown document with mixed lists
+    content = """1. First ordered item
+2. Second ordered item
+- Unordered item 1
+- Unordered item 2
+3. Third ordered item"""
 
     # Initialize parser
     parser = Parser()

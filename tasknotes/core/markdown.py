@@ -334,8 +334,18 @@ class TreeSitterMarkdownService(MarkdownService):
         # If no blocks were created, return None
         if not blocks:
             return None
-        
-        # Return all blocks
+            
+        # For nested lists, we should only return a single block
+        # For top-level lists, we return all blocks
+        if level > 0:
+            # For nested lists, combine all blocks into one if they share the same order type
+            if len(blocks) > 1:
+                first_block = blocks[0]
+                for block in blocks[1:]:
+                    if block.is_ordered == first_block.is_ordered:
+                        first_block._items.extend(block.list_items())
+                return first_block
+            return blocks[0]
         return blocks
     
     def get_meta(self, content: str) -> DocumentMeta:
